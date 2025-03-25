@@ -37,7 +37,7 @@ type KafkaWriter struct {
 func NewKafkaWriter(cfg KafkaConfig) *KafkaWriter {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
-		batchSize = 100		fmt.Printf("Использую размер батча по умолчанию %d messages\n", batchSize)
+		batchSize = 100
 	}
 
 	batchDelayPeriod := cfg.BatchDelayPeriod
@@ -107,7 +107,7 @@ func (w *KafkaWriter) WriteMessages(ctx context.Context, messages [][]byte) erro
 		if err != nil {
 			w.stats.Errors++
 			totalErrors++
-			fmt.Printf("не удалось записать сообщения в Kafka: %w", err)
+			logger.Error.Printf("не удалось записать сообщения в Kafka: %v", err)
 		} else {
 			w.stats.MessagesSent += len(batch)
 			w.stats.BatchesSent++
@@ -155,9 +155,8 @@ func (w *KafkaWriter) LogStats() {
 		stats.Errors,
 	)
 	logger.Info.Printf(
-		"Последнее отправленное: %v",
+		"Последнее отправленное: %s",
 		stats.LastSentAt.Format("2006-Jan-02 15:04:05.000 MST"),
-,
 	)
 }
 

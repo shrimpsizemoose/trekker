@@ -77,7 +77,7 @@ func RequireEnv(requirements map[string]string) {
 	}
 
 	if len(errors) > 0 {
-		logger.Error.Printf("Мне не хватает некоторых переменных окружения 👇")
+		logger.Error.Println("Мне не хватает некоторых переменных окружения 👇")
 		for _, err := range errors {
 			if err.Message == "" {
 				logger.Error.Printf("Нет переменной окружения: %v", err.Key)
