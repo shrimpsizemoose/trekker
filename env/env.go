@@ -2,6 +2,7 @@ package env
 
 import (
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 	"github.com/shrimpsizemoose/trekker/logger"
@@ -17,8 +18,8 @@ func LoadEnv() {
 	_ = godotenv.Load()
 }
 
-// GetEnvOrDefault("PORT", "8000, "использую порт по умолчанию")
-// -> "PORT не задан, использую порт по умолчанию: 8000"
+// GetEnvOrDefault("HOST", "localhost", "использую хост по умолчанию")
+// -> "PORT не задан, использую порт по умолчанию: localhost"
 func GetEnvOrDefault(key, defaultValue string, defaultComment string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value
@@ -27,6 +28,41 @@ func GetEnvOrDefault(key, defaultValue string, defaultComment string) string {
 		logger.Warn.Printf("%s не задан, %s: %s", key, defaultComment, defaultValue)
 	}
 	return defaultValue
+}
+
+// GetEnvIntOrDefault("PORT", 8000, "использую порт по умолчанию")
+// -> "PORT не задан, использую порт по умолчанию: 8000"
+// -> "PORT задан, но из 'куропаточка' не получается целое число, использую порт по умолчанию: 8000"
+// (то же, что и GetEnvOrDefault, но пробует скастовать результат в int)
+func GetEnvIntOrDefault(key string, defaultValue int, defaultComment string) int {
+	value, exists := os.LookupEnv(key)
+	if !exists {
+		if defaultComment != "" {
+			logger.Warn.Printf(
+				"%s не задан, %s: %d",
+				key,
+				defaultComment,
+				defaultValue,
+			)
+		}
+		return defaultValue
+	}
+
+	num, err := strconv.Atoi(value)
+	if err != nil {
+		if defaultComment != "" {
+			logger.Warn.Printf(
+				"Ключ %s задан, но из %s не получается целое число, %s: %d",
+				key,
+				value,
+				defaultComment,
+				defaultValue,
+			)
+		}
+		return defaultValue
+	}
+
+	return num
 }
 
 // проверяет, что нужные переменные окружения (ключи мапы) есть
