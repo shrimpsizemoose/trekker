@@ -80,6 +80,8 @@ analytics = {
 }
 
 -- The verification checks
+-- Demonstrates postgres analytics: on_connect for postgres_connect,
+-- on_start for postgres_tables_empty
 checks = {
     -- Check that Kafka topic exists
     {
@@ -87,12 +89,22 @@ checks = {
         name = "check_topic",
         kafka_addr_env = "LAB02_KAFKA_ADDR",
         kafka_topic_env = "LAB02_KAFKA_TOPIC",
+        analytics = {
+            on_connect = "005_kafka_connected",
+            on_partitions_read = "006_kafka_partitions_read",
+        },
+        on_success = {
+            event = "007_topic_exists",
+        },
     },
     -- Connect to PostgreSQL (only if not send-only mode)
     {
         type = "postgres_connect",
         name = "connect_db",
         postgres_url_env = "LAB02_DB_URL",
+        analytics = {
+            on_connect = "010_postgres_connected",
+        },
         skip_on_flag = "send-only",
     },
     -- Check that PostgreSQL tables are empty before test
@@ -102,6 +114,12 @@ checks = {
         postgres_url_env = "LAB02_DB_URL",
         tables = { "f_hourly_post_stats", "f_hourly_user_stats" },
         message_before = "Проверяю что таблицы пустые",
+        analytics = {
+            on_start = "015_checking_tables",
+        },
+        on_success = {
+            event = "020_tables_empty",
+        },
         skip_on_flag = "send-only",
     },
     -- Run the main pipeline test (custom code)

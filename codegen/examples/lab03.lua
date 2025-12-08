@@ -76,11 +76,16 @@ checks = {
     },
 
     -- 2. Verify topic exists before roundtrip
+    --    Demonstrates kafka_topic_exists analytics: on_connect and on_partitions_read
     {
         type = "kafka_topic_exists",
         name = "topic_check",
         kafka_addr_env = "LAB03_KAFKA",
         kafka_topic_env = "LAB03_TOPIC",
+        analytics = {
+            on_connect = "010_kafka_connected",
+            on_partitions_read = "015_partitions_fetched",
+        },
         on_success = {
             event = "020_topic_exists",
         },

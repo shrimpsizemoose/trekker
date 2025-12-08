@@ -100,17 +100,21 @@ type Check struct {
 	ExpectedStatus int
 	MessageBefore  string
 	MessageSuccess string
+	HTTPAnalytics  HTTPAnalytics
 	// For kafka_topic_exists and kafka_roundtrip
-	KafkaAddrEnv  string
-	KafkaTopicEnv string
+	KafkaAddrEnv        string
+	KafkaTopicEnv       string
+	KafkaTopicAnalytics KafkaTopicAnalytics
 	// For kafka_roundtrip
-	MessageCount     int
-	WaitSeconds      int
-	MessageGenerator string // "uuid", "sequential", "timestamp"
-	Analytics        KafkaAnalytics
-	// For postgres_tables_empty
-	PostgresURLEnv string
-	Tables         []string
+	MessageCount            int
+	WaitSeconds             int
+	MessageGenerator        string // "uuid", "sequential", "timestamp"
+	KafkaRoundtripAnalytics KafkaRoundtripAnalytics
+	// For postgres_connect and postgres_tables_empty
+	PostgresURLEnv           string
+	Tables                   []string
+	PostgresConnectAnalytics PostgresConnectAnalytics
+	PostgresTablesAnalytics  PostgresTablesAnalytics
 	// For forbidden_address
 	ForbiddenAddresses []string
 	// For custom code blocks
@@ -128,9 +132,27 @@ type SuccessAction struct {
 	Event string
 }
 
-type KafkaAnalytics struct {
+type KafkaRoundtripAnalytics struct {
 	OnProduce string
 	OnConsume string
+}
+
+type HTTPAnalytics struct {
+	OnRequest  string
+	OnResponse string
+}
+
+type PostgresConnectAnalytics struct {
+	OnConnect string
+}
+
+type PostgresTablesAnalytics struct {
+	OnStart string
+}
+
+type KafkaTopicAnalytics struct {
+	OnConnect        string
+	OnPartitionsRead string
 }
 
 // ParseLuaConfig reads a Lua file and extracts the lab configuration
@@ -478,6 +500,16 @@ func parseChecks(L *lua.LState, config *LabConfig) error {
 			if ms := entry.RawGetString("message_success"); ms.Type() == lua.LTString {
 				check.MessageSuccess = ms.String()
 			}
+			// Parse analytics for http checks
+			if analytics := entry.RawGetString("analytics"); analytics.Type() == lua.LTTable {
+				analyticsTable := analytics.(*lua.LTable)
+				if onRequest := analyticsTable.RawGetString("on_request"); onRequest.Type() == lua.LTString {
+					check.HTTPAnalytics.OnRequest = onRequest.String()
+				}
+				if onResponse := analyticsTable.RawGetString("on_response"); onResponse.Type() == lua.LTString {
+					check.HTTPAnalytics.OnResponse = onResponse.String()
+				}
+			}
 		case "kafka_topic_exists":
 			if addr := entry.RawGetString("kafka_addr_env"); addr.Type() == lua.LTString {
 				check.KafkaAddrEnv = addr.String()
@@ -491,7 +523,31 @@ func parseChecks(L *lua.LState, config *LabConfig) error {
 			if ms := entry.RawGetString("message_success"); ms.Type() == lua.LTString {
 				check.MessageSuccess = ms.String()
 			}
-		case "postgres_connect", "postgres_tables_empty":
+			// Parse analytics for kafka_topic_exists
+			if analytics := entry.RawGetString("analytics"); analytics.Type() == lua.LTTable {
+				analyticsTable := analytics.(*lua.LTable)
+				if onConnect := analyticsTable.RawGetString("on_connect"); onConnect.Type() == lua.LTString {
+					check.KafkaTopicAnalytics.OnConnect = onConnect.String()
+				}
+				if onPartitions := analyticsTable.RawGetString("on_partitions_read"); onPartitions.Type() == lua.LTString {
+					check.KafkaTopicAnalytics.OnPartitionsRead = onPartitions.String()
+				}
+			}
+		case "postgres_connect":
+			if url := entry.RawGetString("postgres_url_env"); url.Type() == lua.LTString {
+				check.PostgresURLEnv = url.String()
+			}
+			if mb := entry.RawGetString("message_before"); mb.Type() == lua.LTString {
+				check.MessageBefore = mb.String()
+			}
+			// Parse analytics for postgres_connect
+			if analytics := entry.RawGetString("analytics"); analytics.Type() == lua.LTTable {
+				analyticsTable := analytics.(*lua.LTable)
+				if onConnect := analyticsTable.RawGetString("on_connect"); onConnect.Type() == lua.LTString {
+					check.PostgresConnectAnalytics.OnConnect = onConnect.String()
+				}
+			}
+		case "postgres_tables_empty":
 			if url := entry.RawGetString("postgres_url_env"); url.Type() == lua.LTString {
 				check.PostgresURLEnv = url.String()
 			}
@@ -504,6 +560,13 @@ func parseChecks(L *lua.LState, config *LabConfig) error {
 			}
 			if mb := entry.RawGetString("message_before"); mb.Type() == lua.LTString {
 				check.MessageBefore = mb.String()
+			}
+			// Parse analytics for postgres_tables_empty
+			if analytics := entry.RawGetString("analytics"); analytics.Type() == lua.LTTable {
+				analyticsTable := analytics.(*lua.LTable)
+				if onStart := analyticsTable.RawGetString("on_start"); onStart.Type() == lua.LTString {
+					check.PostgresTablesAnalytics.OnStart = onStart.String()
+				}
 			}
 		case "custom":
 			if fn := entry.RawGetString("func"); fn.Type() == lua.LTString {
@@ -554,10 +617,10 @@ func parseChecks(L *lua.LState, config *LabConfig) error {
 			if analytics := entry.RawGetString("analytics"); analytics.Type() == lua.LTTable {
 				analyticsTable := analytics.(*lua.LTable)
 				if onProduce := analyticsTable.RawGetString("on_produce"); onProduce.Type() == lua.LTString {
-					check.Analytics.OnProduce = onProduce.String()
+					check.KafkaRoundtripAnalytics.OnProduce = onProduce.String()
 				}
 				if onConsume := analyticsTable.RawGetString("on_consume"); onConsume.Type() == lua.LTString {
-					check.Analytics.OnConsume = onConsume.String()
+					check.KafkaRoundtripAnalytics.OnConsume = onConsume.String()
 				}
 			}
 		}

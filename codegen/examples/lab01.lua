@@ -70,7 +70,8 @@ analytics = {
 }
 
 -- The actual verification steps
--- These demonstrate the extensibility: HTTP checks, random path check, custom path check
+-- These demonstrate HTTP analytics: on_request fires when request is sent,
+-- on_response fires when any response is received (before status validation)
 checks = {
     {
         type = "http_get",
@@ -79,8 +80,16 @@ checks = {
         expected_status = 200,
         message_before = "Сначала проверю просто, что по адресу отвечает статусом OK",
         message_success = "Вроде тут ок 🎷🐍",
+        analytics = {
+            on_request = "010_base_request_sent",
+            on_response = "015_base_response_received",
+        },
         on_failure = {
+            event = "016_base_check_failed",
             message = "Проверка не обратилась успехом, ожидал статус 200 OK",
+        },
+        on_success = {
+            event = "020_base_check_passed",
         },
     },
     {
@@ -90,8 +99,16 @@ checks = {
         expected_status = 404,
         message_before = "Теперь проверяю, что рандомный адрес отвечает статусом 404 Not Found",
         message_success = "Всё как я и ожидаю, ура 🎷🐂",
+        analytics = {
+            on_request = "030_random_request_sent",
+            on_response = "035_random_response_received",
+        },
         on_failure = {
+            event = "036_random_check_failed",
             message = "Проверка не обратилась успехом, ожидал статус 404 Not Found",
+        },
+        on_success = {
+            event = "040_random_check_passed",
         },
     },
     {
@@ -101,8 +118,16 @@ checks = {
         expected_status = 200,
         message_before = "Продолжаю. Теперь наконец проверяю персональный адрес",
         message_success = "Вроде тут тоже получилось 🎷🐊",
+        analytics = {
+            on_request = "050_student_request_sent",
+            on_response = "055_student_response_received",
+        },
         on_failure = {
+            event = "056_student_check_failed",
             message = "Проверка не обратилась успехом, ожидал статус 200 OK",
+        },
+        on_success = {
+            event = "060_student_check_passed",
         },
     },
 }

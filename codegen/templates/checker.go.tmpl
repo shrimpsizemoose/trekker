@@ -123,7 +123,7 @@ func getRandomPath(baseURL string) string {
 	return fmt.Sprintf("%s/%s", baseURL, string(buf))
 }
 
-func httpCheck(ctx context.Context, url string, expectedStatus int, msgBefore, msgSuccess, msgFail string) error {
+func httpCheck(ctx context.Context, url string, expectedStatus int, msgBefore, msgSuccess, msgFail, onRequestEvent, onResponseEvent string) error {
 	logger.Info.Printf("%s: %s", msgBefore, url)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -131,11 +131,19 @@ func httpCheck(ctx context.Context, url string, expectedStatus int, msgBefore, m
 		return err
 	}
 
+	if onRequestEvent != "" {
+		tracker.Ping(onRequestEvent, nil)
+	}
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+
+	if onResponseEvent != "" {
+		tracker.Ping(onResponseEvent, nil)
+	}
 
 	if resp.StatusCode != expectedStatus {
 		return fmt.Errorf("%s, получил %s", msgFail, resp.Status)
@@ -147,7 +155,7 @@ func httpCheck(ctx context.Context, url string, expectedStatus int, msgBefore, m
 
 {{- if .HasKafkaChecks}}
 
-func checkKafkaTopicExists(addr, topic string) error {
+func checkKafkaTopicExists(addr, topic, onConnectEvent, onPartitionsReadEvent string) error {
 	logger.Info.Printf("Проверяю наличие топика %s в Kafka...", topic)
 
 	conn, err := kafka.Dial("tcp", addr)
@@ -156,9 +164,17 @@ func checkKafkaTopicExists(addr, topic string) error {
 	}
 	defer conn.Close()
 
+	if onConnectEvent != "" {
+		tracker.Ping(onConnectEvent, nil)
+	}
+
 	partitions, err := conn.ReadPartitions()
 	if err != nil {
 		return fmt.Errorf("не удалось прочитать партиции: %w", err)
+	}
+
+	if onPartitionsReadEvent != "" {
+		tracker.Ping(onPartitionsReadEvent, nil)
 	}
 
 	for _, p := range partitions {
@@ -174,7 +190,10 @@ func checkKafkaTopicExists(addr, topic string) error {
 
 {{- if .HasPostgresChecks}}
 
-func checkPostgresTablesEmpty(db *sql.DB, tables []string) error {
+func checkPostgresTablesEmpty(db *sql.DB, tables []string, onStartEvent string) error {
+	if onStartEvent != "" {
+		tracker.Ping(onStartEvent, nil)
+	}
 	for _, table := range tables {
 		var count int
 		err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&count)
@@ -392,6 +411,8 @@ func main() {
 		"{{.MessageBefore}}",
 		"{{.MessageSuccess}}",
 		"{{.OnFailure.Message}}",
+		"{{.HTTPAnalytics.OnRequest}}",
+		"{{.HTTPAnalytics.OnResponse}}",
 	); err != nil {
 		{{- if .OnFailure.Event}}
 		tracker.Ping("{{.OnFailure.Event}}", nil)
@@ -408,6 +429,8 @@ func main() {
 		"{{.MessageBefore}}",
 		"{{.MessageSuccess}}",
 		"{{.OnFailure.Message}}",
+		"{{.HTTPAnalytics.OnRequest}}",
+		"{{.HTTPAnalytics.OnResponse}}",
 	); err != nil {
 		{{- if .OnFailure.Event}}
 		tracker.Ping("{{.OnFailure.Event}}", nil)
@@ -421,6 +444,8 @@ func main() {
 	if err := checkKafkaTopicExists(
 		os.Getenv("{{$.EnvPrefix}}_{{.KafkaAddrEnv}}"),
 		os.Getenv("{{$.EnvPrefix}}_{{.KafkaTopicEnv}}"),
+		"{{.KafkaTopicAnalytics.OnConnect}}",
+		"{{.KafkaTopicAnalytics.OnPartitionsRead}}",
 	); err != nil {
 		{{- if .OnFailure.Event}}
 		tracker.Ping("{{.OnFailure.Event}}", nil)
@@ -439,11 +464,14 @@ func main() {
 		logger.Error.Fatal(err)
 	}
 	defer db.Close()
+	{{- if .PostgresConnectAnalytics.OnConnect}}
+	tracker.Ping("{{.PostgresConnectAnalytics.OnConnect}}", nil)
+	{{- end}}
 	{{- if .OnSuccess.Event}}
 	tracker.Ping("{{.OnSuccess.Event}}", nil)
 	{{- end}}
 {{- else if eq .Type "postgres_tables_empty"}}
-	if err := checkPostgresTablesEmpty(db, []string{ {{- range .Tables}}"{{.}}", {{end}}}); err != nil {
+	if err := checkPostgresTablesEmpty(db, []string{ {{- range .Tables}}"{{.}}", {{end}}}, "{{.PostgresTablesAnalytics.OnStart}}"); err != nil {
 		{{- if .OnFailure.Event}}
 		tracker.Ping("{{.OnFailure.Event}}", nil)
 		{{- end}}
@@ -467,8 +495,8 @@ func main() {
 		{{.MessageCount}},
 		{{.WaitSeconds}},
 		"{{.MessageGenerator}}",
-		"{{.Analytics.OnProduce}}",
-		"{{.Analytics.OnConsume}}",
+		"{{.KafkaRoundtripAnalytics.OnProduce}}",
+		"{{.KafkaRoundtripAnalytics.OnConsume}}",
 	); err != nil {
 		{{- if .OnFailure.Event}}
 		tracker.Ping("{{.OnFailure.Event}}", nil)
