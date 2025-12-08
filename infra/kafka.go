@@ -32,6 +32,7 @@ type KafkaWriter struct {
 	batchSize        int
 	batchDelayPeriod time.Duration
 	lastBatchSentAt  time.Time
+	lastBatchMu      sync.Mutex
 }
 
 func NewKafkaWriter(cfg KafkaConfig) *KafkaWriter {
@@ -75,7 +76,9 @@ func (w *KafkaWriter) WriteMessages(ctx context.Context, messages [][]byte) erro
 	totalErrors := 0
 	for _, batch := range batches {
 		if w.batchDelayPeriod > 0 {
+			w.lastBatchMu.Lock()
 			timeSinceLastBatch := time.Since(w.lastBatchSentAt)
+			w.lastBatchMu.Unlock()
 			if timeSinceLastBatch < w.batchDelayPeriod {
 				waitTime := w.batchDelayPeriod - timeSinceLastBatch
 				fmt.Printf("Waiting %v before sending next batch\n", waitTime)
@@ -100,7 +103,9 @@ func (w *KafkaWriter) WriteMessages(ctx context.Context, messages [][]byte) erro
 		err := w.writer.WriteMessages(ctx, kafkaMessages...)
 
 		now := time.Now()
+		w.lastBatchMu.Lock()
 		w.lastBatchSentAt = now
+		w.lastBatchMu.Unlock()
 
 		w.stats.mu.Lock()
 
