@@ -94,6 +94,7 @@ type Check struct {
 	Expected        string
 	CaseInsensitive bool
 	OnFailure       FailureAction
+	OnSuccess       SuccessAction
 	// For http_get / http_get_random_path
 	URL            string
 	ExpectedStatus int
@@ -120,6 +121,10 @@ type Check struct {
 type FailureAction struct {
 	Event   string
 	Message string
+}
+
+type SuccessAction struct {
+	Event string
 }
 
 // ParseLuaConfig reads a Lua file and extracts the lab configuration
@@ -554,6 +559,14 @@ func parseChecks(L *lua.LState, config *LabConfig) error {
 			}
 			if msg := ofTable.RawGetString("message"); msg.Type() == lua.LTString {
 				check.OnFailure.Message = msg.String()
+			}
+		}
+
+		// Parse on_success
+		if os := entry.RawGetString("on_success"); os.Type() == lua.LTTable {
+			osTable := os.(*lua.LTable)
+			if ev := osTable.RawGetString("event"); ev.Type() == lua.LTString {
+				check.OnSuccess.Event = ev.String()
 			}
 		}
 

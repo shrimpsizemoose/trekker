@@ -81,6 +81,9 @@ checks = {
         name = "topic_check",
         kafka_addr_env = "LAB03_KAFKA",
         kafka_topic_env = "LAB03_TOPIC",
+        on_success = {
+            event = "020_topic_exists",
+        },
     },
 
     -- 3. Full roundtrip test: produce N messages, wait, consume N
@@ -95,6 +98,9 @@ checks = {
         message_generator = "sequential",  -- "sequential", "timestamp", or "uuid"
         on_failure = {
             event = "010_roundtrip_failed",
+        },
+        on_success = {
+            event = "070_roundtrip_complete",
         },
     },
 

@@ -376,6 +376,9 @@ func main() {
 		tracker.Ping("{{.OnFailure.Event}}", nil)
 		logger.Error.Fatalf("{{.OnFailure.Message}}")
 	}
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
 {{- else if eq .Type "http_get"}}
 	if err := httpCheck(rootCtx,
 		fmt.Sprintf("{{urlToFormat .URL}}", {{range extractVars .URL}}os.Getenv("{{$.EnvPrefix}}_{{.}}"), {{end}}),
@@ -384,8 +387,14 @@ func main() {
 		"{{.MessageSuccess}}",
 		"{{.OnFailure.Message}}",
 	); err != nil {
+		{{- if .OnFailure.Event}}
+		tracker.Ping("{{.OnFailure.Event}}", nil)
+		{{- end}}
 		logger.Error.Fatal(err)
 	}
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
 {{- else if eq .Type "http_get_random_path"}}
 	if err := httpCheck(rootCtx,
 		getRandomPath(fmt.Sprintf("{{urlToFormat .URL}}", {{range extractVars .URL}}os.Getenv("{{$.EnvPrefix}}_{{.}}"), {{end}})),
@@ -394,30 +403,57 @@ func main() {
 		"{{.MessageSuccess}}",
 		"{{.OnFailure.Message}}",
 	); err != nil {
+		{{- if .OnFailure.Event}}
+		tracker.Ping("{{.OnFailure.Event}}", nil)
+		{{- end}}
 		logger.Error.Fatal(err)
 	}
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
 {{- else if eq .Type "kafka_topic_exists"}}
 	if err := checkKafkaTopicExists(
 		os.Getenv("{{$.EnvPrefix}}_{{.KafkaAddrEnv}}"),
 		os.Getenv("{{$.EnvPrefix}}_{{.KafkaTopicEnv}}"),
 	); err != nil {
+		{{- if .OnFailure.Event}}
+		tracker.Ping("{{.OnFailure.Event}}", nil)
+		{{- end}}
 		logger.Error.Fatal(err)
 	}
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
 {{- else if eq .Type "postgres_connect"}}
 	db, err = sql.Open("postgres", os.Getenv("{{$.EnvPrefix}}_{{.PostgresURLEnv}}"))
 	if err != nil {
+		{{- if .OnFailure.Event}}
+		tracker.Ping("{{.OnFailure.Event}}", nil)
+		{{- end}}
 		logger.Error.Fatal(err)
 	}
 	defer db.Close()
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
 {{- else if eq .Type "postgres_tables_empty"}}
 	if err := checkPostgresTablesEmpty(db, []string{ {{- range .Tables}}"{{.}}", {{end}}}); err != nil {
+		{{- if .OnFailure.Event}}
+		tracker.Ping("{{.OnFailure.Event}}", nil)
+		{{- end}}
 		logger.Error.Fatalf("{{.MessageBefore}}: %v", err)
 	}
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
 {{- else if eq .Type "forbidden_address"}}
 	if checkForbiddenAddress(os.Getenv("{{$.EnvPrefix}}_{{.EnvVar}}"), []string{ {{- range .ForbiddenAddresses}}"{{.}}", {{end}}}) {
 		tracker.Ping("{{.OnFailure.Event}}", nil)
 		logger.Error.Fatalf("{{.OnFailure.Message}}")
 	}
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
 {{- else if eq .Type "kafka_roundtrip"}}
 	if err := kafkaRoundtripCheck(rootCtx,
 		os.Getenv("{{$.EnvPrefix}}_{{.KafkaAddrEnv}}"),
@@ -431,10 +467,19 @@ func main() {
 		{{- end}}
 		logger.Error.Fatal(err)
 	}
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
 {{- else if eq .Type "custom"}}
 	if err := {{.CustomFunc}}(rootCtx); err != nil {
+		{{- if .OnFailure.Event}}
+		tracker.Ping("{{.OnFailure.Event}}", nil)
+		{{- end}}
 		logger.Error.Fatal(err)
 	}
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
 {{- end}}
 {{- if .SkipOnFlag}}
 	}
