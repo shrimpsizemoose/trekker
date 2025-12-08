@@ -54,19 +54,20 @@ func (a *Analytics) sendEvent(eventType string, additionalData map[string]string
 		return fmt.Errorf("error marshaling JSON: %w", err)
 	}
 
-	http.DefaultClient.Timeout = 3 * time.Second
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: a.config.SkipTLS}
-
 	req, err := http.NewRequest("POST", a.config.BaseURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
 
+	req.Header.Set("Content-Type", "application/json")
 	for k, v := range a.config.SecretHeaders {
 		req.Header.Set(k, v)
 	}
 
-	client := &http.Client{Timeout: 3 * time.Second}
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: a.config.SkipTLS},
+	}
+	client := &http.Client{Timeout: 3 * time.Second, Transport: transport}
 	resp, err := client.Do(req)
 	if err != nil {
 		if a.verbose {
