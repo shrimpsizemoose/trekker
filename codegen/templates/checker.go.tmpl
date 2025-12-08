@@ -204,7 +204,7 @@ func checkForbiddenAddress(value string, forbidden []string) bool {
 
 {{- if .HasKafkaRoundtripChecks}}
 
-func kafkaRoundtripCheck(ctx context.Context, addr, topic string, messageCount, waitSeconds int, generator string) error {
+func kafkaRoundtripCheck(ctx context.Context, addr, topic string, messageCount, waitSeconds int, generator string, onProduceEvent, onConsumeEvent string) error {
 	logger.Info.Println("----------------------------------------")
 	logger.Info.Printf("Начинаю kafka roundtrip тест: %d сообщений", messageCount)
 
@@ -236,6 +236,9 @@ func kafkaRoundtripCheck(ctx context.Context, addr, topic string, messageCount, 
 		return fmt.Errorf("ошибка при отправке сообщений: %w", err)
 	}
 	logger.Victory.Printf("Отправлено %d сообщений", messageCount)
+	if onProduceEvent != "" {
+		tracker.Ping(onProduceEvent, nil)
+	}
 
 	// Wait
 	if waitSeconds > 0 {
@@ -264,6 +267,9 @@ func kafkaRoundtripCheck(ctx context.Context, addr, topic string, messageCount, 
 	}
 
 	logger.Victory.Printf("Kafka roundtrip успешен: %d/%d сообщений", consumed, messageCount)
+	if onConsumeEvent != "" {
+		tracker.Ping(onConsumeEvent, nil)
+	}
 	return nil
 }
 {{- end}}
@@ -461,6 +467,8 @@ func main() {
 		{{.MessageCount}},
 		{{.WaitSeconds}},
 		"{{.MessageGenerator}}",
+		"{{.Analytics.OnProduce}}",
+		"{{.Analytics.OnConsume}}",
 	); err != nil {
 		{{- if .OnFailure.Event}}
 		tracker.Ping("{{.OnFailure.Event}}", nil)

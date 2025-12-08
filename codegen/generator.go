@@ -107,6 +107,7 @@ type Check struct {
 	MessageCount     int
 	WaitSeconds      int
 	MessageGenerator string // "uuid", "sequential", "timestamp"
+	Analytics        KafkaAnalytics
 	// For postgres_tables_empty
 	PostgresURLEnv string
 	Tables         []string
@@ -125,6 +126,11 @@ type FailureAction struct {
 
 type SuccessAction struct {
 	Event string
+}
+
+type KafkaAnalytics struct {
+	OnProduce string
+	OnConsume string
 }
 
 // ParseLuaConfig reads a Lua file and extracts the lab configuration
@@ -543,6 +549,16 @@ func parseChecks(L *lua.LState, config *LabConfig) error {
 			}
 			if ms := entry.RawGetString("message_success"); ms.Type() == lua.LTString {
 				check.MessageSuccess = ms.String()
+			}
+			// Parse analytics for kafka_roundtrip
+			if analytics := entry.RawGetString("analytics"); analytics.Type() == lua.LTTable {
+				analyticsTable := analytics.(*lua.LTable)
+				if onProduce := analyticsTable.RawGetString("on_produce"); onProduce.Type() == lua.LTString {
+					check.Analytics.OnProduce = onProduce.String()
+				}
+				if onConsume := analyticsTable.RawGetString("on_consume"); onConsume.Type() == lua.LTString {
+					check.Analytics.OnConsume = onConsume.String()
+				}
 			}
 		}
 

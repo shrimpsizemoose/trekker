@@ -87,7 +87,7 @@ checks = {
     },
 
     -- 3. Full roundtrip test: produce N messages, wait, consume N
-    --    Uses new "kafka_roundtrip" check type
+    --    Uses new "kafka_roundtrip" check type with analytics events
     {
         type = "kafka_roundtrip",
         name = "roundtrip",
@@ -96,6 +96,10 @@ checks = {
         message_count = 5,
         wait_seconds = 2,
         message_generator = "sequential",  -- "sequential", "timestamp", or "uuid"
+        analytics = {
+            on_produce = "030_messages_sent",
+            on_consume = "060_messages_consumed",
+        },
         on_failure = {
             event = "010_roundtrip_failed",
         },
