@@ -4,7 +4,7 @@
 package main
 
 import (
-{{- if or .HasHTTPChecks .HasKafkaChecks .HasPostgresChecks}}
+{{- if or .HasHTTPChecks .HasKafkaChecks .HasPostgresChecks .HasCustomChecks}}
 	"context"
 	"os/signal"
 {{- end}}
@@ -21,7 +21,7 @@ import (
 	"net/http"
 {{- end}}
 	"os"
-{{- if .HasParamChecks}}
+{{- if or .HasParamChecks .HasForbiddenAddrChecks}}
 	"strings"
 {{- end}}
 {{- if .HasKafkaChecks}}
@@ -189,6 +189,85 @@ func checkPostgresTablesEmpty(db *sql.DB, tables []string) error {
 }
 {{- end}}
 
+{{- if .HasForbiddenAddrChecks}}
+
+func checkForbiddenAddress(value string, forbidden []string) bool {
+	lowerVal := strings.ToLower(value)
+	for _, f := range forbidden {
+		if strings.HasPrefix(lowerVal, strings.ToLower(f)) {
+			return true
+		}
+	}
+	return false
+}
+{{- end}}
+
+{{- if .HasKafkaRoundtripChecks}}
+
+func kafkaRoundtripCheck(ctx context.Context, addr, topic string, messageCount, waitSeconds int, generator string) error {
+	logger.Info.Println("----------------------------------------")
+	logger.Info.Printf("Начинаю kafka roundtrip тест: %d сообщений", messageCount)
+
+	kafkaConfig := infra.KafkaConfig{
+		Addr:  addr,
+		Topic: topic,
+	}
+
+	writer := infra.NewKafkaWriter(kafkaConfig)
+	defer writer.Close()
+
+	// Generate messages
+	messages := make([][]byte, messageCount)
+	for i := 0; i < messageCount; i++ {
+		var msg string
+		switch generator {
+		case "sequential":
+			msg = fmt.Sprintf("msg-%d", i)
+		case "timestamp":
+			msg = fmt.Sprintf("msg-%d-%d", i, time.Now().UnixNano())
+		default: // "uuid" or empty
+			msg = fmt.Sprintf("msg-%d-%d", i, time.Now().UnixNano())
+		}
+		messages[i] = []byte(msg)
+	}
+
+	logger.Info.Printf("Отправляю %d сообщений...", messageCount)
+	if err := writer.WriteMessages(ctx, messages); err != nil {
+		return fmt.Errorf("ошибка при отправке сообщений: %w", err)
+	}
+	logger.Victory.Printf("Отправлено %d сообщений", messageCount)
+
+	// Wait
+	if waitSeconds > 0 {
+		logger.Info.Printf("Жду %d секунд...", waitSeconds)
+		time.Sleep(time.Duration(waitSeconds) * time.Second)
+	}
+
+	// Consume
+	logger.Info.Println("Читаю сообщения обратно...")
+	reader := infra.NewKafkaReader(kafkaConfig)
+	defer reader.Close()
+
+	consumed := 0
+	for i := 0; i < messageCount; i++ {
+		_, err := reader.ReadMessage(ctx)
+		if err != nil {
+			return fmt.Errorf("ошибка при чтении сообщения %d: %w", i+1, err)
+		}
+		consumed++
+	}
+
+	logger.Info.Printf("Прочитано %d сообщений", consumed)
+
+	if consumed != messageCount {
+		return fmt.Errorf("несовпадение: отправлено %d, получено %d", messageCount, consumed)
+	}
+
+	logger.Victory.Printf("Kafka roundtrip успешен: %d/%d сообщений", consumed, messageCount)
+	return nil
+}
+{{- end}}
+
 {{range .Checks}}
 {{- if eq .Type "param_equals"}}
 func checkParam{{.EnvVar}}() bool {
@@ -209,7 +288,7 @@ func checkParam{{.EnvVar}}() bool {
 {{- end}}
 
 func main() {
-{{- if or .HasHTTPChecks .HasKafkaChecks .HasPostgresChecks}}
+{{- if or .HasHTTPChecks .HasKafkaChecks .HasPostgresChecks .HasCustomChecks}}
 	rootCtx, rootCancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer rootCancel()
 {{- end}}
@@ -333,6 +412,24 @@ func main() {
 {{- else if eq .Type "postgres_tables_empty"}}
 	if err := checkPostgresTablesEmpty(db, []string{ {{- range .Tables}}"{{.}}", {{end}}}); err != nil {
 		logger.Error.Fatalf("{{.MessageBefore}}: %v", err)
+	}
+{{- else if eq .Type "forbidden_address"}}
+	if checkForbiddenAddress(os.Getenv("{{$.EnvPrefix}}_{{.EnvVar}}"), []string{ {{- range .ForbiddenAddresses}}"{{.}}", {{end}}}) {
+		tracker.Ping("{{.OnFailure.Event}}", nil)
+		logger.Error.Fatalf("{{.OnFailure.Message}}")
+	}
+{{- else if eq .Type "kafka_roundtrip"}}
+	if err := kafkaRoundtripCheck(rootCtx,
+		os.Getenv("{{$.EnvPrefix}}_{{.KafkaAddrEnv}}"),
+		os.Getenv("{{$.EnvPrefix}}_{{.KafkaTopicEnv}}"),
+		{{.MessageCount}},
+		{{.WaitSeconds}},
+		"{{.MessageGenerator}}",
+	); err != nil {
+		{{- if .OnFailure.Event}}
+		tracker.Ping("{{.OnFailure.Event}}", nil)
+		{{- end}}
+		logger.Error.Fatal(err)
 	}
 {{- else if eq .Type "custom"}}
 	if err := {{.CustomFunc}}(rootCtx); err != nil {

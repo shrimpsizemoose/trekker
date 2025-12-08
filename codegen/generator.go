@@ -41,11 +41,14 @@ type LabConfig struct {
 	CustomCode    string
 
 	// Computed fields for template conditionals
-	HasHTTPChecks     bool
-	HasParamChecks    bool
-	HasKafkaChecks    bool
-	HasPostgresChecks bool
-	HasFlags          bool
+	HasHTTPChecks           bool
+	HasParamChecks          bool
+	HasKafkaChecks          bool
+	HasPostgresChecks       bool
+	HasCustomChecks         bool
+	HasForbiddenAddrChecks  bool
+	HasKafkaRoundtripChecks bool
+	HasFlags                bool
 }
 
 type EnvVar struct {
@@ -96,15 +99,22 @@ type Check struct {
 	ExpectedStatus int
 	MessageBefore  string
 	MessageSuccess string
-	// For kafka_topic_exists
+	// For kafka_topic_exists and kafka_roundtrip
 	KafkaAddrEnv  string
 	KafkaTopicEnv string
+	// For kafka_roundtrip
+	MessageCount     int
+	WaitSeconds      int
+	MessageGenerator string // "uuid", "sequential", "timestamp"
 	// For postgres_tables_empty
 	PostgresURLEnv string
 	Tables         []string
+	// For forbidden_address
+	ForbiddenAddresses []string
 	// For custom code blocks
 	CustomFunc string
-	SkipOnFlag string // skip this check if flag is set
+	Requires   []string // dependencies: "context", "kafka", "infra", "time"
+	SkipOnFlag string   // skip this check if flag is set
 }
 
 type FailureAction struct {
@@ -192,8 +202,22 @@ func ParseLuaConfig(filename string) (*LabConfig, error) {
 			config.HasParamChecks = true
 		case "kafka_topic_exists":
 			config.HasKafkaChecks = true
+		case "kafka_roundtrip":
+			config.HasKafkaChecks = true
+			config.HasKafkaRoundtripChecks = true
 		case "postgres_connect", "postgres_tables_empty":
 			config.HasPostgresChecks = true
+		case "custom":
+			config.HasCustomChecks = true
+			// Process requires to set appropriate flags
+			for _, req := range check.Requires {
+				switch req {
+				case "kafka", "infra":
+					config.HasKafkaChecks = true
+				}
+			}
+		case "forbidden_address":
+			config.HasForbiddenAddrChecks = true
 		}
 	}
 	config.HasFlags = len(config.Flags) > 0
@@ -474,6 +498,47 @@ func parseChecks(L *lua.LState, config *LabConfig) error {
 			if fn := entry.RawGetString("func"); fn.Type() == lua.LTString {
 				check.CustomFunc = fn.String()
 			}
+			// Parse requires for custom checks
+			if req := entry.RawGetString("requires"); req.Type() == lua.LTTable {
+				req.(*lua.LTable).ForEach(func(_, v lua.LValue) {
+					if v.Type() == lua.LTString {
+						check.Requires = append(check.Requires, v.String())
+					}
+				})
+			}
+		case "forbidden_address":
+			if ev := entry.RawGetString("env_var"); ev.Type() == lua.LTString {
+				check.EnvVar = ev.String()
+			}
+			if forbidden := entry.RawGetString("forbidden"); forbidden.Type() == lua.LTTable {
+				forbidden.(*lua.LTable).ForEach(func(_, v lua.LValue) {
+					if v.Type() == lua.LTString {
+						check.ForbiddenAddresses = append(check.ForbiddenAddresses, v.String())
+					}
+				})
+			}
+		case "kafka_roundtrip":
+			if addr := entry.RawGetString("kafka_addr_env"); addr.Type() == lua.LTString {
+				check.KafkaAddrEnv = addr.String()
+			}
+			if topic := entry.RawGetString("kafka_topic_env"); topic.Type() == lua.LTString {
+				check.KafkaTopicEnv = topic.String()
+			}
+			if count := entry.RawGetString("message_count"); count.Type() == lua.LTNumber {
+				check.MessageCount = int(lua.LVAsNumber(count))
+			}
+			if wait := entry.RawGetString("wait_seconds"); wait.Type() == lua.LTNumber {
+				check.WaitSeconds = int(lua.LVAsNumber(wait))
+			}
+			if gen := entry.RawGetString("message_generator"); gen.Type() == lua.LTString {
+				check.MessageGenerator = gen.String()
+			}
+			if mb := entry.RawGetString("message_before"); mb.Type() == lua.LTString {
+				check.MessageBefore = mb.String()
+			}
+			if ms := entry.RawGetString("message_success"); ms.Type() == lua.LTString {
+				check.MessageSuccess = ms.String()
+			}
 		}
 
 		// Common: skip_on_flag
@@ -509,7 +574,12 @@ func parseCustomCode(L *lua.LState, config *LabConfig) error {
 	if imports := t.RawGetString("imports"); imports.Type() == lua.LTTable {
 		imports.(*lua.LTable).ForEach(func(_, v lua.LValue) {
 			if v.Type() == lua.LTString {
-				config.CustomImports = append(config.CustomImports, v.String())
+				imp := v.String()
+				// Expand trekker: shorthand to full path
+				if strings.HasPrefix(imp, "trekker:") {
+					imp = "github.com/shrimpsizemoose/trekker/" + strings.TrimPrefix(imp, "trekker:")
+				}
+				config.CustomImports = append(config.CustomImports, imp)
 			}
 		})
 	}
