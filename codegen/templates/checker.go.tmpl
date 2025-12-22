@@ -4,12 +4,23 @@
 package main
 
 import (
-{{- if or .HasHTTPChecks .HasKafkaChecks .HasPostgresChecks .HasCustomChecks}}
+{{- if .HasKafkaSendFileChecks}}
+	"bufio"
+{{- end}}
+{{- if .HasHTTPBatchChecks}}
+	"bytes"
+	_ "embed"
+{{- end}}
+{{- if or .HasHTTPChecks .HasKafkaChecks .HasPostgresChecks .HasCustomChecks .HasHTTPRequestChecks .HasHTTPBatchChecks}}
 	"context"
 	"os/signal"
 {{- end}}
 {{- if .HasPostgresChecks}}
 	"database/sql"
+{{- end}}
+{{- if or .HasHTTPRequestChecks .HasHTTPBatchChecks}}
+	"encoding/json"
+	"io"
 {{- end}}
 {{- if .HasFlags}}
 	"flag"
@@ -18,13 +29,15 @@ import (
 {{- if .HasHTTPChecks}}
 	"crypto/rand"
 	"math/big"
+{{- end}}
+{{- if or .HasHTTPChecks .HasHTTPRequestChecks .HasHTTPBatchChecks}}
 	"net/http"
 {{- end}}
 	"os"
-{{- if or .HasParamChecks .HasForbiddenAddrChecks}}
+{{- if or .HasParamChecks .HasForbiddenAddrChecks .HasHTTPRequestChecks .HasHTTPBatchChecks}}
 	"strings"
 {{- end}}
-{{- if .HasKafkaChecks}}
+{{- if or .HasKafkaChecks .HasWaitChecks .HasHTTPBatchChecks}}
 	"time"
 {{- end}}
 
@@ -41,11 +54,21 @@ import (
 	"github.com/shrimpsizemoose/trekker/infra"
 {{- end}}
 	"github.com/shrimpsizemoose/trekker/logger"
+{{- if .HasMaskedFields}}
 	"github.com/shrimpsizemoose/trekker/utils"
+{{- end}}
 {{- range .CustomImports}}
 	"{{.}}"
 {{- end}}
 )
+{{- if .EmbeddedData}}
+
+// Embedded test data files
+{{- range .EmbeddedData}}
+//go:embed {{.File}}
+var {{.Name}}Data []byte
+{{- end}}
+{{- end}}
 
 var tracker analytics.Tracker
 {{- if .HasFlags}}
@@ -293,6 +316,231 @@ func kafkaRoundtripCheck(ctx context.Context, addr, topic string, messageCount, 
 }
 {{- end}}
 
+{{- if .HasHTTPRequestChecks}}
+
+type HTTPRequestParams struct {
+	Method          string
+	URL             string
+	Body            string
+	ContentType     string
+	AuthType        string
+	AuthUser        string
+	AuthPass        string
+	AuthToken       string
+	ExpectedStatus  int
+	MessageBefore   string
+	MessageSuccess  string
+	OnRequestEvent  string
+	OnResponseEvent string
+}
+
+func httpRequest(ctx context.Context, p HTTPRequestParams) ([]byte, error) {
+	if p.MessageBefore != "" {
+		logger.Info.Printf("%s: %s %s", p.MessageBefore, p.Method, p.URL)
+	} else {
+		logger.Info.Printf("HTTP %s: %s", p.Method, p.URL)
+	}
+
+	var reqBody io.Reader
+	if p.Body != "" {
+		reqBody = strings.NewReader(p.Body)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, p.Method, p.URL, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при создании запроса: %w", err)
+	}
+
+	if p.ContentType != "" {
+		req.Header.Set("Content-Type", p.ContentType)
+	}
+
+	switch p.AuthType {
+	case "basic":
+		req.SetBasicAuth(p.AuthUser, p.AuthPass)
+	case "bearer":
+		req.Header.Set("Authorization", "Bearer "+p.AuthToken)
+	}
+
+	if p.OnRequestEvent != "" {
+		tracker.Ping(p.OnRequestEvent, nil)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при выполнении запроса: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if p.OnResponseEvent != "" {
+		tracker.Ping(p.OnResponseEvent, nil)
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при чтении ответа: %w", err)
+	}
+
+	if p.ExpectedStatus != 0 && resp.StatusCode != p.ExpectedStatus {
+		return respBody, fmt.Errorf("ожидал статус %d, получил %s", p.ExpectedStatus, resp.Status)
+	}
+
+	if p.MessageSuccess != "" {
+		logger.Victory.Print(p.MessageSuccess)
+	}
+	return respBody, nil
+}
+
+func checkJSONField(respBody []byte, field, expected string) error {
+	if field == "" {
+		return nil
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(respBody, &data); err != nil {
+		return fmt.Errorf("ошибка при разборе JSON: %w", err)
+	}
+
+	// Support nested fields with dot notation
+	parts := strings.Split(field, ".")
+	var current interface{} = data
+	for _, part := range parts {
+		if m, ok := current.(map[string]interface{}); ok {
+			current = m[part]
+		} else {
+			return fmt.Errorf("поле %s не найдено", field)
+		}
+	}
+
+	actual := fmt.Sprintf("%v", current)
+	if actual != expected {
+		return fmt.Errorf("поле %s: ожидал %q, получил %q", field, expected, actual)
+	}
+
+	return nil
+}
+{{- end}}
+
+{{- if .HasKafkaSendFileChecks}}
+
+func kafkaSendFile(ctx context.Context, addr, topic, filePath string, onStartEvent, onCompleteEvent string) error {
+	logger.Info.Printf("Отправляю сообщения из файла %s в топик %s...", filePath, topic)
+
+	if onStartEvent != "" {
+		tracker.Ping(onStartEvent, nil)
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("не удалось открыть файл %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	kafkaConfig := infra.KafkaConfig{
+		Addr:  addr,
+		Topic: topic,
+	}
+
+	writer := infra.NewKafkaWriter(kafkaConfig)
+	defer writer.Close()
+
+	var messages [][]byte
+	scanner := bufio.NewScanner(file)
+	// Increase buffer size for long lines
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) > 0 {
+			// Make a copy since scanner reuses the buffer
+			msg := make([]byte, len(line))
+			copy(msg, line)
+			messages = append(messages, msg)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("ошибка при чтении файла: %w", err)
+	}
+
+	logger.Info.Printf("Прочитано %d сообщений из файла", len(messages))
+
+	if err := writer.WriteMessages(ctx, messages); err != nil {
+		return fmt.Errorf("ошибка при отправке сообщений: %w", err)
+	}
+
+	logger.Victory.Printf("Отправлено %d сообщений в Kafka", len(messages))
+
+	if onCompleteEvent != "" {
+		tracker.Ping(onCompleteEvent, nil)
+	}
+
+	return nil
+}
+{{- end}}
+
+{{- if .HasHTTPBatchChecks}}
+
+// BatchTestCase represents a single test case from embedded data
+type BatchTestCase map[string]interface{}
+
+// BatchResult stores results for repeat validation
+type BatchResult struct {
+	Request  string
+	Expected map[string]string
+}
+
+// Global state for batch results (used by http_batch_repeat)
+var batchResults = make(map[string][]BatchResult)
+
+// Counter tracking for metrics validation
+var batchCounters = struct {
+	TotalSent  int
+	CacheHits  int
+	Successful int
+	Failed     int
+}{}
+
+func getJSONField(data map[string]interface{}, field string) (string, bool) {
+	parts := strings.Split(field, ".")
+	var current interface{} = data
+	for _, part := range parts {
+		if m, ok := current.(map[string]interface{}); ok {
+			current = m[part]
+		} else {
+			return "", false
+		}
+	}
+	if current == nil {
+		return "", false
+	}
+	switch v := current.(type) {
+	case bool:
+		if v {
+			return "true", true
+		}
+		return "false", true
+	case float64:
+		if v == float64(int(v)) {
+			return fmt.Sprintf("%d", int(v)), true
+		}
+		return fmt.Sprintf("%v", v), true
+	default:
+		return fmt.Sprintf("%v", current), true
+	}
+}
+
+func expandTemplate(tmpl string, data BatchTestCase) string {
+	result := tmpl
+	for key, value := range data {
+		placeholder := "${" + key + "}"
+		result = strings.ReplaceAll(result, placeholder, fmt.Sprintf("%v", value))
+	}
+	return result
+}
+{{- end}}
+
 {{range .Checks}}
 {{- if eq .Type "param_equals"}}
 func checkParam{{.EnvVar}}() bool {
@@ -313,7 +561,7 @@ func checkParam{{.EnvVar}}() bool {
 {{- end}}
 
 func main() {
-{{- if or .HasHTTPChecks .HasKafkaChecks .HasPostgresChecks .HasCustomChecks}}
+{{- if or .HasHTTPChecks .HasKafkaChecks .HasPostgresChecks .HasCustomChecks .HasHTTPRequestChecks .HasHTTPBatchChecks}}
 	rootCtx, rootCancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer rootCancel()
 {{- end}}
@@ -390,6 +638,14 @@ func main() {
 	// Connect to PostgreSQL
 	var db *sql.DB
 	var err error
+{{- end}}
+
+{{- if .HasHTTPRequestChecks}}
+	// Variables for HTTP request checks
+	var respBody []byte
+{{- if not .HasPostgresChecks}}
+	var err error
+{{- end}}
 {{- end}}
 
 {{range .Checks}}
@@ -506,6 +762,90 @@ func main() {
 	{{- if .OnSuccess.Event}}
 	tracker.Ping("{{.OnSuccess.Event}}", nil)
 	{{- end}}
+{{- else if eq .Type "http_request"}}
+	respBody, err = httpRequest(rootCtx, HTTPRequestParams{
+		Method:         "{{.Method}}",
+		URL:            fmt.Sprintf("{{urlToFormat .URL}}", {{range extractVars .URL}}os.Getenv("{{$.EnvPrefix}}_{{.}}"), {{end}}),
+		{{- if .Body}}
+		Body:           `{{.Body}}`,
+		{{- end}}
+		{{- if .ContentType}}
+		ContentType:    "{{.ContentType}}",
+		{{- end}}
+		{{- if .Auth.Type}}
+		AuthType:       "{{.Auth.Type}}",
+		{{- end}}
+		{{- if .Auth.UserEnv}}
+		AuthUser:       os.Getenv("{{$.EnvPrefix}}_{{.Auth.UserEnv}}"),
+		{{- end}}
+		{{- if .Auth.PassEnv}}
+		AuthPass:       os.Getenv("{{$.EnvPrefix}}_{{.Auth.PassEnv}}"),
+		{{- end}}
+		{{- if .Auth.TokenEnv}}
+		AuthToken:      os.Getenv("{{$.EnvPrefix}}_{{.Auth.TokenEnv}}"),
+		{{- end}}
+		ExpectedStatus: {{.ExpectedStatus}},
+		{{- if .MessageBefore}}
+		MessageBefore:  "{{.MessageBefore}}",
+		{{- end}}
+		{{- if .MessageSuccess}}
+		MessageSuccess: "{{.MessageSuccess}}",
+		{{- end}}
+		{{- if .HTTPAnalytics.OnRequest}}
+		OnRequestEvent: "{{.HTTPAnalytics.OnRequest}}",
+		{{- end}}
+		{{- if .HTTPAnalytics.OnResponse}}
+		OnResponseEvent: "{{.HTTPAnalytics.OnResponse}}",
+		{{- end}}
+	})
+	if err != nil {
+		{{- if .OnFailure.Event}}
+		tracker.Ping("{{.OnFailure.Event}}", nil)
+		{{- end}}
+		logger.Error.Fatal(err)
+	}
+	{{- if .ResponseCheck.JSONField}}
+	if err := checkJSONField(respBody, "{{.ResponseCheck.JSONField}}", "{{.ResponseCheck.Expected}}"); err != nil {
+		{{- if .OnFailure.Event}}
+		tracker.Ping("{{.OnFailure.Event}}", nil)
+		{{- end}}
+		logger.Error.Fatal(err)
+	}
+	{{- else}}
+	_ = respBody
+	{{- end}}
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
+{{- else if eq .Type "wait"}}
+	{{- if .WaitAnalytics.OnStart}}
+	tracker.Ping("{{.WaitAnalytics.OnStart}}", nil)
+	{{- end}}
+	{{- if .WaitMessage}}
+	logger.Info.Printf("{{.WaitMessage}}")
+	{{- else}}
+	logger.Info.Printf("Жду %d секунд...", {{.WaitSeconds}})
+	{{- end}}
+	time.Sleep(time.Duration({{.WaitSeconds}}) * time.Second)
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
+{{- else if eq .Type "kafka_send_file"}}
+	if err := kafkaSendFile(rootCtx,
+		os.Getenv("{{$.EnvPrefix}}_{{.KafkaAddrEnv}}"),
+		os.Getenv("{{$.EnvPrefix}}_{{.KafkaTopicEnv}}"),
+		"{{.FilePath}}",
+		"{{.KafkaSendFileAnalytics.OnStart}}",
+		"{{.KafkaSendFileAnalytics.OnComplete}}",
+	); err != nil {
+		{{- if .OnFailure.Event}}
+		tracker.Ping("{{.OnFailure.Event}}", nil)
+		{{- end}}
+		logger.Error.Fatal(err)
+	}
+	{{- if .OnSuccess.Event}}
+	tracker.Ping("{{.OnSuccess.Event}}", nil)
+	{{- end}}
 {{- else if eq .Type "custom"}}
 	if err := {{.CustomFunc}}(rootCtx); err != nil {
 		{{- if .OnFailure.Event}}
@@ -516,6 +856,250 @@ func main() {
 	{{- if .OnSuccess.Event}}
 	tracker.Ping("{{.OnSuccess.Event}}", nil)
 	{{- end}}
+{{- else if eq .Type "http_batch"}}
+	// HTTP Batch: {{.Name}}
+	{
+		{{- if .MessageBefore}}
+		logger.Info.Println("{{.MessageBefore}}")
+		{{- else}}
+		logger.Info.Println("Running batch HTTP requests: {{.Name}}")
+		{{- end}}
+
+		var testCases []BatchTestCase
+		if err := json.Unmarshal({{.HTTPBatch.TestData}}Data, &testCases); err != nil {
+			logger.Error.Fatalf("Failed to parse test data: %v", err)
+		}
+
+		batchName := "{{.Name}}"
+		batchResults[batchName] = make([]BatchResult, 0, len(testCases))
+		successCount := 0
+		failCount := 0
+
+		for i, tc := range testCases {
+			batchCounters.TotalSent++
+
+			reqBody := expandTemplate(`{{.HTTPBatch.RequestTemplate}}`, tc)
+
+			req, err := http.NewRequestWithContext(rootCtx, "{{.Method}}", fmt.Sprintf("{{urlToFormat .URL}}", {{range extractVars .URL}}os.Getenv("{{$.EnvPrefix}}_{{.}}"), {{end}}), bytes.NewBufferString(reqBody))
+			if err != nil {
+				logger.Error.Printf("[%d] Request creation failed: %v", i, err)
+				failCount++
+				continue
+			}
+			{{- if .ContentType}}
+			req.Header.Set("Content-Type", "{{.ContentType}}")
+			{{- end}}
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				logger.Error.Printf("[%d] Request failed: %v", i, err)
+				failCount++
+				continue
+			}
+
+			respBody, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				logger.Error.Printf("[%d] Failed to read response: %v", i, err)
+				failCount++
+				continue
+			}
+
+			if resp.StatusCode != {{.ExpectedStatus}} {
+				logger.Error.Printf("[%d] Expected status {{.ExpectedStatus}}, got %d", i, resp.StatusCode)
+				failCount++
+				continue
+			}
+
+			var respData map[string]interface{}
+			if err := json.Unmarshal(respBody, &respData); err != nil {
+				logger.Error.Printf("[%d] Failed to parse response JSON: %v", i, err)
+				failCount++
+				continue
+			}
+
+			// Validate response fields
+			allFieldsOK := true
+			expectedMap := make(map[string]string)
+			{{- range .ResponseChecks}}
+			{
+				actual, found := getJSONField(respData, "{{.JSONField}}")
+				if !found {
+					logger.Error.Printf("[%d] Field '{{.JSONField}}' not found in response", i)
+					allFieldsOK = false
+				} else {
+					{{- if .FromData}}
+					expectedVal := fmt.Sprintf("%v", tc["{{.FromData}}"])
+					expectedMap["{{.JSONField}}"] = expectedVal
+					if actual != expectedVal {
+						logger.Error.Printf("[%d] Field '{{.JSONField}}': expected %q (from {{.FromData}}), got %q", i, expectedVal, actual)
+						allFieldsOK = false
+					}
+					{{- else}}
+					expectedMap["{{.JSONField}}"] = "{{.Expected}}"
+					if actual != "{{.Expected}}" {
+						logger.Error.Printf("[%d] Field '{{.JSONField}}': expected %q, got %q", i, "{{.Expected}}", actual)
+						allFieldsOK = false
+					}
+					{{- end}}
+				}
+			}
+			{{- end}}
+
+			// Store result for potential repeat
+			batchResults[batchName] = append(batchResults[batchName], BatchResult{
+				Request:  reqBody,
+				Expected: expectedMap,
+			})
+
+			if allFieldsOK {
+				successCount++
+				batchCounters.Successful++
+			} else {
+				failCount++
+				batchCounters.Failed++
+			}
+
+			{{- if .HTTPBatch.DelayMs}}
+			time.Sleep({{.HTTPBatch.DelayMs}} * time.Millisecond)
+			{{- end}}
+		}
+
+		logger.Info.Printf("Batch '{{.Name}}': %d/%d successful", successCount, len(testCases))
+		if failCount > 0 {
+			{{- if .OnFailure.Event}}
+			tracker.Ping("{{.OnFailure.Event}}", nil)
+			{{- end}}
+			{{- if .OnFailure.Message}}
+			logger.Error.Fatalf("{{.OnFailure.Message}}: %d failures", failCount)
+			{{- else}}
+			logger.Error.Fatalf("Batch '{{.Name}}' had %d failures", failCount)
+			{{- end}}
+		}
+		{{- if .MessageSuccess}}
+		logger.Victory.Println("{{.MessageSuccess}}")
+		{{- else}}
+		logger.Victory.Printf("Batch '{{.Name}}' completed successfully")
+		{{- end}}
+		{{- if .OnSuccess.Event}}
+		tracker.Ping("{{.OnSuccess.Event}}", nil)
+		{{- end}}
+	}
+{{- else if eq .Type "http_batch_repeat"}}
+	// HTTP Batch Repeat: {{.Name}} (reusing {{.ReuseFrom}})
+	{
+		{{- if .MessageBefore}}
+		logger.Info.Println("{{.MessageBefore}}")
+		{{- else}}
+		logger.Info.Println("Repeating batch requests: {{.Name}}")
+		{{- end}}
+
+		previousResults, ok := batchResults["{{.ReuseFrom}}"]
+		if !ok || len(previousResults) == 0 {
+			logger.Error.Fatalf("No previous results found for batch '{{.ReuseFrom}}'")
+		}
+
+		successCount := 0
+		failCount := 0
+
+		for i, prev := range previousResults {
+			batchCounters.TotalSent++
+
+			req, err := http.NewRequestWithContext(rootCtx, "{{.Method}}", fmt.Sprintf("{{urlToFormat .URL}}", {{range extractVars .URL}}os.Getenv("{{$.EnvPrefix}}_{{.}}"), {{end}}), bytes.NewBufferString(prev.Request))
+			if err != nil {
+				logger.Error.Printf("[%d] Request creation failed: %v", i, err)
+				failCount++
+				continue
+			}
+			{{- if .ContentType}}
+			req.Header.Set("Content-Type", "{{.ContentType}}")
+			{{- end}}
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				logger.Error.Printf("[%d] Request failed: %v", i, err)
+				failCount++
+				continue
+			}
+
+			respBody, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				logger.Error.Printf("[%d] Failed to read response: %v", i, err)
+				failCount++
+				continue
+			}
+
+			if resp.StatusCode != {{.ExpectedStatus}} {
+				logger.Error.Printf("[%d] Expected status {{.ExpectedStatus}}, got %d", i, resp.StatusCode)
+				failCount++
+				continue
+			}
+
+			var respData map[string]interface{}
+			if err := json.Unmarshal(respBody, &respData); err != nil {
+				logger.Error.Printf("[%d] Failed to parse response JSON: %v", i, err)
+				failCount++
+				continue
+			}
+
+			// Validate response fields
+			allFieldsOK := true
+			{{- range .ResponseChecks}}
+			{
+				actual, found := getJSONField(respData, "{{.JSONField}}")
+				if !found {
+					logger.Error.Printf("[%d] Field '{{.JSONField}}' not found in response", i)
+					allFieldsOK = false
+				} else {
+					{{- if .FromData}}
+					expectedVal := prev.Expected["{{.JSONField}}"]
+					if actual != expectedVal {
+						logger.Error.Printf("[%d] Field '{{.JSONField}}': expected %q, got %q", i, expectedVal, actual)
+						allFieldsOK = false
+					}
+					{{- else}}
+					if actual != "{{.Expected}}" {
+						logger.Error.Printf("[%d] Field '{{.JSONField}}': expected %q, got %q", i, "{{.Expected}}", actual)
+						allFieldsOK = false
+					}
+					{{- end}}
+				}
+			}
+			{{- end}}
+
+			if allFieldsOK {
+				successCount++
+				batchCounters.CacheHits++
+			} else {
+				failCount++
+			}
+
+			{{- if .HTTPBatch.DelayMs}}
+			time.Sleep({{.HTTPBatch.DelayMs}} * time.Millisecond)
+			{{- end}}
+		}
+
+		logger.Info.Printf("Batch repeat '{{.Name}}': %d/%d successful", successCount, len(previousResults))
+		if failCount > 0 {
+			{{- if .OnFailure.Event}}
+			tracker.Ping("{{.OnFailure.Event}}", nil)
+			{{- end}}
+			{{- if .OnFailure.Message}}
+			logger.Error.Fatalf("{{.OnFailure.Message}}: %d failures", failCount)
+			{{- else}}
+			logger.Error.Fatalf("Batch repeat '{{.Name}}' had %d failures", failCount)
+			{{- end}}
+		}
+		{{- if .MessageSuccess}}
+		logger.Victory.Println("{{.MessageSuccess}}")
+		{{- else}}
+		logger.Victory.Printf("Batch repeat '{{.Name}}' completed successfully")
+		{{- end}}
+		{{- if .OnSuccess.Event}}
+		tracker.Ping("{{.OnSuccess.Event}}", nil)
+		{{- end}}
+	}
 {{- end}}
 {{- if .SkipOnFlag}}
 	}

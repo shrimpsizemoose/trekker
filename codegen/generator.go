@@ -40,15 +40,23 @@ type LabConfig struct {
 	CustomTypes   string
 	CustomCode    string
 
+	// Embedded data files
+	EmbeddedData []EmbeddedData
+
 	// Computed fields for template conditionals
 	HasHTTPChecks           bool
+	HasHTTPRequestChecks    bool
+	HasHTTPBatchChecks      bool
 	HasParamChecks          bool
 	HasKafkaChecks          bool
 	HasPostgresChecks       bool
 	HasCustomChecks         bool
 	HasForbiddenAddrChecks  bool
 	HasKafkaRoundtripChecks bool
+	HasKafkaSendFileChecks  bool
+	HasWaitChecks           bool
 	HasFlags                bool
+	HasMaskedFields         bool
 }
 
 type EnvVar struct {
@@ -101,6 +109,12 @@ type Check struct {
 	MessageBefore  string
 	MessageSuccess string
 	HTTPAnalytics  HTTPAnalytics
+	// For http_request (generalized HTTP check)
+	Method        string // GET, POST, PUT, DELETE
+	Auth          HTTPRequestAuth
+	Body          string
+	ContentType   string
+	ResponseCheck ResponseCheck
 	// For kafka_topic_exists and kafka_roundtrip
 	KafkaAddrEnv        string
 	KafkaTopicEnv       string
@@ -110,6 +124,12 @@ type Check struct {
 	WaitSeconds             int
 	MessageGenerator        string // "uuid", "sequential", "timestamp"
 	KafkaRoundtripAnalytics KafkaRoundtripAnalytics
+	// For kafka_send_file
+	FilePath               string
+	KafkaSendFileAnalytics KafkaSendFileAnalytics
+	// For wait
+	WaitMessage   string
+	WaitAnalytics WaitAnalytics
 	// For postgres_connect and postgres_tables_empty
 	PostgresURLEnv           string
 	Tables                   []string
@@ -121,6 +141,15 @@ type Check struct {
 	CustomFunc string
 	Requires   []string // dependencies: "context", "kafka", "infra", "time"
 	SkipOnFlag string   // skip this check if flag is set
+
+	// For http_batch check type
+	HTTPBatch HTTPBatchConfig
+
+	// For http_batch_repeat check type
+	ReuseFrom string // name of previous http_batch to repeat
+
+	// Multi-field response checks (used by http_request and http_batch)
+	ResponseChecks ResponseChecks
 }
 
 type FailureAction struct {
@@ -153,6 +182,48 @@ type PostgresTablesAnalytics struct {
 type KafkaTopicAnalytics struct {
 	OnConnect        string
 	OnPartitionsRead string
+}
+
+// For http_request check type
+type HTTPRequestAuth struct {
+	Type     string // "none", "basic", "bearer"
+	UserEnv  string // env var name for username (basic auth)
+	PassEnv  string // env var name for password (basic auth)
+	TokenEnv string // env var name for token (bearer auth)
+}
+
+type ResponseCheck struct {
+	JSONField string
+	Expected  string
+	FromData  string // field name from test data to compare against
+}
+
+// ResponseChecks is a slice for multi-field validation
+type ResponseChecks []ResponseCheck
+
+// HTTPBatchConfig holds configuration for http_batch check type
+type HTTPBatchConfig struct {
+	TestData        string           // name of embedded test data
+	RequestTemplate string           // JSON template with {{.field}} placeholders
+	ResponseChecks  ResponseChecks   // multiple response validations
+	DelayMs         int              // delay between requests in milliseconds
+}
+
+// EmbeddedData represents a data file to embed in the generated checker
+type EmbeddedData struct {
+	Name string // reference name used in checks
+	File string // path to JSON file
+}
+
+// For wait check type
+type WaitAnalytics struct {
+	OnStart string
+}
+
+// For kafka_send_file check type
+type KafkaSendFileAnalytics struct {
+	OnStart    string
+	OnComplete string
 }
 
 // ParseLuaConfig reads a Lua file and extracts the lab configuration
@@ -221,6 +292,11 @@ func ParseLuaConfig(filename string) (*LabConfig, error) {
 		return nil, err
 	}
 
+	// Parse embedded_data
+	if err := parseEmbeddedData(L, config); err != nil {
+		return nil, err
+	}
+
 	// Parse success_message
 	if v := L.GetGlobal("success_message"); v.Type() == lua.LTString {
 		config.SuccessMessage = v.String()
@@ -231,6 +307,8 @@ func ParseLuaConfig(filename string) (*LabConfig, error) {
 		switch check.Type {
 		case "http_get", "http_get_random_path":
 			config.HasHTTPChecks = true
+		case "http_request":
+			config.HasHTTPRequestChecks = true
 		case "param_equals":
 			config.HasParamChecks = true
 		case "kafka_topic_exists":
@@ -238,6 +316,11 @@ func ParseLuaConfig(filename string) (*LabConfig, error) {
 		case "kafka_roundtrip":
 			config.HasKafkaChecks = true
 			config.HasKafkaRoundtripChecks = true
+		case "kafka_send_file":
+			config.HasKafkaChecks = true
+			config.HasKafkaSendFileChecks = true
+		case "wait":
+			config.HasWaitChecks = true
 		case "postgres_connect", "postgres_tables_empty":
 			config.HasPostgresChecks = true
 		case "custom":
@@ -251,9 +334,19 @@ func ParseLuaConfig(filename string) (*LabConfig, error) {
 			}
 		case "forbidden_address":
 			config.HasForbiddenAddrChecks = true
+		case "http_batch", "http_batch_repeat":
+			config.HasHTTPBatchChecks = true
 		}
 	}
 	config.HasFlags = len(config.Flags) > 0
+
+	// Check for masked fields in confirm_display
+	for _, cf := range config.ConfirmDisplay {
+		if cf.Masked {
+			config.HasMaskedFields = true
+			break
+		}
+	}
 
 	return config, nil
 }
@@ -623,6 +716,206 @@ func parseChecks(L *lua.LState, config *LabConfig) error {
 					check.KafkaRoundtripAnalytics.OnConsume = onConsume.String()
 				}
 			}
+		case "http_request":
+			if url := entry.RawGetString("url"); url.Type() == lua.LTString {
+				check.URL = url.String()
+			}
+			if method := entry.RawGetString("method"); method.Type() == lua.LTString {
+				check.Method = method.String()
+			} else {
+				check.Method = "GET" // default
+			}
+			if status := entry.RawGetString("expected_status"); status.Type() == lua.LTNumber {
+				check.ExpectedStatus = int(lua.LVAsNumber(status))
+			}
+			if body := entry.RawGetString("body"); body.Type() == lua.LTString {
+				check.Body = body.String()
+			}
+			if ct := entry.RawGetString("content_type"); ct.Type() == lua.LTString {
+				check.ContentType = ct.String()
+			}
+			if mb := entry.RawGetString("message_before"); mb.Type() == lua.LTString {
+				check.MessageBefore = mb.String()
+			}
+			if ms := entry.RawGetString("message_success"); ms.Type() == lua.LTString {
+				check.MessageSuccess = ms.String()
+			}
+			// Parse auth
+			if auth := entry.RawGetString("auth"); auth.Type() == lua.LTTable {
+				authTable := auth.(*lua.LTable)
+				if authType := authTable.RawGetString("type"); authType.Type() == lua.LTString {
+					check.Auth.Type = authType.String()
+				}
+				if userEnv := authTable.RawGetString("user_env"); userEnv.Type() == lua.LTString {
+					check.Auth.UserEnv = userEnv.String()
+				}
+				if passEnv := authTable.RawGetString("pass_env"); passEnv.Type() == lua.LTString {
+					check.Auth.PassEnv = passEnv.String()
+				}
+				if tokenEnv := authTable.RawGetString("token_env"); tokenEnv.Type() == lua.LTString {
+					check.Auth.TokenEnv = tokenEnv.String()
+				}
+			}
+			// Parse response_check
+			if rc := entry.RawGetString("response_check"); rc.Type() == lua.LTTable {
+				rcTable := rc.(*lua.LTable)
+				if field := rcTable.RawGetString("json_field"); field.Type() == lua.LTString {
+					check.ResponseCheck.JSONField = field.String()
+				}
+				if expected := rcTable.RawGetString("expected"); expected.Type() == lua.LTString {
+					check.ResponseCheck.Expected = expected.String()
+				}
+			}
+			// Parse analytics for http_request (reuse HTTPAnalytics)
+			if analytics := entry.RawGetString("analytics"); analytics.Type() == lua.LTTable {
+				analyticsTable := analytics.(*lua.LTable)
+				if onRequest := analyticsTable.RawGetString("on_request"); onRequest.Type() == lua.LTString {
+					check.HTTPAnalytics.OnRequest = onRequest.String()
+				}
+				if onResponse := analyticsTable.RawGetString("on_response"); onResponse.Type() == lua.LTString {
+					check.HTTPAnalytics.OnResponse = onResponse.String()
+				}
+			}
+		case "wait":
+			if seconds := entry.RawGetString("seconds"); seconds.Type() == lua.LTNumber {
+				check.WaitSeconds = int(lua.LVAsNumber(seconds))
+			}
+			if msg := entry.RawGetString("message"); msg.Type() == lua.LTString {
+				check.WaitMessage = msg.String()
+			}
+			// Parse analytics for wait
+			if analytics := entry.RawGetString("analytics"); analytics.Type() == lua.LTTable {
+				analyticsTable := analytics.(*lua.LTable)
+				if onStart := analyticsTable.RawGetString("on_start"); onStart.Type() == lua.LTString {
+					check.WaitAnalytics.OnStart = onStart.String()
+				}
+			}
+		case "kafka_send_file":
+			if addr := entry.RawGetString("kafka_addr_env"); addr.Type() == lua.LTString {
+				check.KafkaAddrEnv = addr.String()
+			}
+			if topic := entry.RawGetString("kafka_topic_env"); topic.Type() == lua.LTString {
+				check.KafkaTopicEnv = topic.String()
+			}
+			if file := entry.RawGetString("file"); file.Type() == lua.LTString {
+				check.FilePath = file.String()
+			}
+			if mb := entry.RawGetString("message_before"); mb.Type() == lua.LTString {
+				check.MessageBefore = mb.String()
+			}
+			if ms := entry.RawGetString("message_success"); ms.Type() == lua.LTString {
+				check.MessageSuccess = ms.String()
+			}
+			// Parse analytics for kafka_send_file
+			if analytics := entry.RawGetString("analytics"); analytics.Type() == lua.LTTable {
+				analyticsTable := analytics.(*lua.LTable)
+				if onStart := analyticsTable.RawGetString("on_start"); onStart.Type() == lua.LTString {
+					check.KafkaSendFileAnalytics.OnStart = onStart.String()
+				}
+				if onComplete := analyticsTable.RawGetString("on_complete"); onComplete.Type() == lua.LTString {
+					check.KafkaSendFileAnalytics.OnComplete = onComplete.String()
+				}
+			}
+		case "http_batch":
+			if url := entry.RawGetString("url"); url.Type() == lua.LTString {
+				check.URL = url.String()
+			}
+			if method := entry.RawGetString("method"); method.Type() == lua.LTString {
+				check.Method = method.String()
+			} else {
+				check.Method = "POST" // default for batch
+			}
+			if ct := entry.RawGetString("content_type"); ct.Type() == lua.LTString {
+				check.ContentType = ct.String()
+			}
+			if mb := entry.RawGetString("message_before"); mb.Type() == lua.LTString {
+				check.MessageBefore = mb.String()
+			}
+			if ms := entry.RawGetString("message_success"); ms.Type() == lua.LTString {
+				check.MessageSuccess = ms.String()
+			}
+			if status := entry.RawGetString("expected_status"); status.Type() == lua.LTNumber {
+				check.ExpectedStatus = int(lua.LVAsNumber(status))
+			} else {
+				check.ExpectedStatus = 200 // default
+			}
+			// Parse http_batch specific fields
+			if td := entry.RawGetString("test_data"); td.Type() == lua.LTString {
+				check.HTTPBatch.TestData = td.String()
+			}
+			if rt := entry.RawGetString("request_template"); rt.Type() == lua.LTString {
+				check.HTTPBatch.RequestTemplate = rt.String()
+			}
+			if delay := entry.RawGetString("delay_ms"); delay.Type() == lua.LTNumber {
+				check.HTTPBatch.DelayMs = int(lua.LVAsNumber(delay))
+			}
+			// Parse response_checks array
+			if rcs := entry.RawGetString("response_checks"); rcs.Type() == lua.LTTable {
+				rcs.(*lua.LTable).ForEach(func(_, v lua.LValue) {
+					if v.Type() == lua.LTTable {
+						rcEntry := v.(*lua.LTable)
+						rc := ResponseCheck{}
+						if field := rcEntry.RawGetString("field"); field.Type() == lua.LTString {
+							rc.JSONField = field.String()
+						}
+						if expected := rcEntry.RawGetString("expected"); expected.Type() == lua.LTString {
+							rc.Expected = expected.String()
+						}
+						if fromData := rcEntry.RawGetString("from_data"); fromData.Type() == lua.LTString {
+							rc.FromData = fromData.String()
+						}
+						check.ResponseChecks = append(check.ResponseChecks, rc)
+					}
+				})
+			}
+		case "http_batch_repeat":
+			if url := entry.RawGetString("url"); url.Type() == lua.LTString {
+				check.URL = url.String()
+			}
+			if method := entry.RawGetString("method"); method.Type() == lua.LTString {
+				check.Method = method.String()
+			} else {
+				check.Method = "POST"
+			}
+			if ct := entry.RawGetString("content_type"); ct.Type() == lua.LTString {
+				check.ContentType = ct.String()
+			}
+			if mb := entry.RawGetString("message_before"); mb.Type() == lua.LTString {
+				check.MessageBefore = mb.String()
+			}
+			if ms := entry.RawGetString("message_success"); ms.Type() == lua.LTString {
+				check.MessageSuccess = ms.String()
+			}
+			if status := entry.RawGetString("expected_status"); status.Type() == lua.LTNumber {
+				check.ExpectedStatus = int(lua.LVAsNumber(status))
+			} else {
+				check.ExpectedStatus = 200
+			}
+			if reuse := entry.RawGetString("reuse"); reuse.Type() == lua.LTString {
+				check.ReuseFrom = reuse.String()
+			}
+			if delay := entry.RawGetString("delay_ms"); delay.Type() == lua.LTNumber {
+				check.HTTPBatch.DelayMs = int(lua.LVAsNumber(delay))
+			}
+			// Parse response_checks array for repeat
+			if rcs := entry.RawGetString("response_checks"); rcs.Type() == lua.LTTable {
+				rcs.(*lua.LTable).ForEach(func(_, v lua.LValue) {
+					if v.Type() == lua.LTTable {
+						rcEntry := v.(*lua.LTable)
+						rc := ResponseCheck{}
+						if field := rcEntry.RawGetString("field"); field.Type() == lua.LTString {
+							rc.JSONField = field.String()
+						}
+						if expected := rcEntry.RawGetString("expected"); expected.Type() == lua.LTString {
+							rc.Expected = expected.String()
+						}
+						if fromData := rcEntry.RawGetString("from_data"); fromData.Type() == lua.LTString {
+							rc.FromData = fromData.String()
+						}
+						check.ResponseChecks = append(check.ResponseChecks, rc)
+					}
+				})
+			}
 		}
 
 		// Common: skip_on_flag
@@ -685,6 +978,32 @@ func parseCustomCode(L *lua.LState, config *LabConfig) error {
 	if code := t.RawGetString("code"); code.Type() == lua.LTString {
 		config.CustomCode = code.String()
 	}
+
+	return nil
+}
+
+func parseEmbeddedData(L *lua.LState, config *LabConfig) error {
+	edTable := L.GetGlobal("embedded_data")
+	if edTable.Type() != lua.LTTable {
+		return nil
+	}
+	t := edTable.(*lua.LTable)
+
+	t.ForEach(func(_, v lua.LValue) {
+		if v.Type() == lua.LTTable {
+			entry := v.(*lua.LTable)
+			ed := EmbeddedData{}
+			if name := entry.RawGetString("name"); name.Type() == lua.LTString {
+				ed.Name = name.String()
+			}
+			if file := entry.RawGetString("file"); file.Type() == lua.LTString {
+				ed.File = file.String()
+			}
+			if ed.Name != "" && ed.File != "" {
+				config.EmbeddedData = append(config.EmbeddedData, ed)
+			}
+		}
+	})
 
 	return nil
 }
