@@ -128,8 +128,5 @@ success_message: "Все проверки успешно пройдены! 🎉"
 custom_code:
   imports:
     - encoding/json
-    - math/rand
-    - time
-    - github.com/cheggaaa/pb/v3
   types_file: lab02_types.go
   code_file: lab02_code.go

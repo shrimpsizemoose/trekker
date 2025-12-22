@@ -60,6 +60,30 @@ class Generator:
         return re.findall(r"\$\{([^}]+)\}", url)
 
     @staticmethod
+    def _strip_build_constraints(content: str) -> str:
+        """Strip Go build constraints from file content.
+
+        Removes lines starting with //go:build or // +build and any
+        following blank line (as per Go convention).
+        """
+        lines = content.split("\n")
+        result = []
+        skip_next_blank = False
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("//go:build") or stripped.startswith("// +build"):
+                skip_next_blank = True
+                continue
+            if skip_next_blank and stripped == "":
+                skip_next_blank = False
+                continue
+            skip_next_blank = False
+            result.append(line)
+
+        return "\n".join(result)
+
+    @staticmethod
     def _url_format(url: str, env_prefix: str) -> str:
         """Convert URL with ${VAR} placeholders to Go fmt.Sprintf call.
 
@@ -107,6 +131,8 @@ class Generator:
             if cc.get("types_file"):
                 types_path = config_dir / cc["types_file"]
                 file_content = types_path.read_text()
+                # Strip build constraints (//go:build, // +build)
+                file_content = cls._strip_build_constraints(file_content)
                 # Merge: file content first, then inline
                 cc["types"] = file_content + "\n" + cc.get("types", "")
                 cc["types"] = cc["types"].strip()
@@ -115,6 +141,8 @@ class Generator:
             if cc.get("code_file"):
                 code_path = config_dir / cc["code_file"]
                 file_content = code_path.read_text()
+                # Strip build constraints (//go:build, // +build)
+                file_content = cls._strip_build_constraints(file_content)
                 # Merge: file content first, then inline
                 cc["code"] = file_content + "\n" + cc.get("code", "")
                 cc["code"] = cc["code"].strip()

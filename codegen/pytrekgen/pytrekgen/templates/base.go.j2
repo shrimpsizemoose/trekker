@@ -56,7 +56,7 @@ import (
 {% if config.has_masked_fields %}
 	"github.com/shrimpsizemoose/trekker/utils"
 {% endif %}
-{% for imp in config.custom_code.imports %}
+{% for imp in config.get_filtered_imports() %}
 {% if imp.startswith("trekker:") %}
 	"github.com/shrimpsizemoose/trekker/{{ imp[8:] }}"
 {% else %}
@@ -239,30 +239,30 @@ func kafkaRoundtrip(ctx context.Context, addr, topic string, msgCount, waitSec i
 	logger.Info.Printf("Запускаю roundtrip тест: %d сообщений в топик %s", msgCount, topic)
 
 	// Generate messages
-	messages := make([]string, msgCount)
+	messages := make([][]byte, msgCount)
 	for i := 0; i < msgCount; i++ {
+		var msg string
 		switch generator {
 		case "sequential":
-			messages[i] = fmt.Sprintf("test-message-%d", i)
+			msg = fmt.Sprintf("test-message-%d", i)
 		case "timestamp":
-			messages[i] = fmt.Sprintf("msg-%d-%d", i, time.Now().UnixNano())
+			msg = fmt.Sprintf("msg-%d-%d", i, time.Now().UnixNano())
 		case "uuid":
-			messages[i] = fmt.Sprintf("msg-%d-%d", i, time.Now().UnixNano())
+			msg = fmt.Sprintf("msg-%d-%d", i, time.Now().UnixNano())
 		default:
-			messages[i] = fmt.Sprintf("test-message-%d", i)
+			msg = fmt.Sprintf("test-message-%d", i)
 		}
+		messages[i] = []byte(msg)
 	}
 
 	// Produce messages
-	writer := infra.NewKafkaWriter(addr, topic)
+	writer := infra.NewKafkaWriter(infra.KafkaConfig{
+		Addr:  addr,
+		Topic: topic,
+	})
 	defer writer.Close()
 
-	kafkaMessages := make([]kafka.Message, len(messages))
-	for i, msg := range messages {
-		kafkaMessages[i] = kafka.Message{Value: []byte(msg)}
-	}
-
-	if err := writer.WriteMessages(ctx, kafkaMessages...); err != nil {
+	if err := writer.WriteMessages(ctx, messages); err != nil {
 		if onFailEvent != "" {
 			tracker.Ping(onFailEvent, nil)
 		}
@@ -275,7 +275,10 @@ func kafkaRoundtrip(ctx context.Context, addr, topic string, msgCount, waitSec i
 	time.Sleep(time.Duration(waitSec) * time.Second)
 
 	// Consume messages
-	reader := infra.NewKafkaReader(addr, topic, "roundtrip-checker")
+	reader := infra.NewKafkaReader(infra.KafkaConfig{
+		Addr:  addr,
+		Topic: topic,
+	})
 	defer reader.Close()
 
 	received := 0
@@ -431,6 +434,14 @@ func main() {
 		"{{ check.on_failure.event }}",
 		"{{ check.on_failure.message }}",
 	)
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
+{% elif check.type == "wait" %}
+{% if check.message %}
+	logger.Info.Println("{{ check.message }}")
+{% endif %}
+	time.Sleep({{ check.seconds }} * time.Second)
 {% if check.on_success.event %}
 	tracker.Ping("{{ check.on_success.event }}", nil)
 {% endif %}

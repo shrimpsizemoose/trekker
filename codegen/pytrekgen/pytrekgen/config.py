@@ -426,3 +426,25 @@ class LabConfig(BaseModel):
             else:
                 result.append(field)
         return result
+
+    def get_filtered_imports(self) -> list[str]:
+        """Get custom imports filtered to exclude auto-generated ones.
+
+        Returns custom_code.imports minus any imports that are automatically
+        added based on check types (to avoid duplicates).
+        """
+        auto_imports = {"fmt", "os"}
+
+        conditional_imports = {
+            "context": [self.has_context],
+            "time": [self.has_kafka_checks, self.has_wait_checks, self.has_http_batch_checks],
+            "strings": [self.has_param_checks, self.has_forbidden_addr_checks, self.has_http_request_checks, self.has_http_batch_checks],
+            "encoding/json": [self.has_http_request_checks, self.has_http_batch_checks],
+            "net/http": [self.has_http_checks, self.has_http_request_checks, self.has_http_batch_checks],
+            "database/sql": [self.has_postgres_checks],
+            "flag": [self.has_flags],
+        }
+
+        auto_imports |= {imp for imp, conds in conditional_imports.items() if any(conds)}
+
+        return [imp for imp in self.custom_code.imports if imp not in auto_imports]
