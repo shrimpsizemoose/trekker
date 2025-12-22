@@ -53,6 +53,11 @@ def main() -> None:
         action="store_true",
         help="Enable debug logging",
     )
+    parser.add_argument(
+        "--with-gomod",
+        action="store_true",
+        help="Generate go.mod alongside the checker (requires -o and build.module in config)",
+    )
 
     args = parser.parse_args()
 
@@ -77,6 +82,14 @@ def main() -> None:
         log.error("Failed to parse config: %s", e)
         sys.exit(1)
 
+    if args.with_gomod and not args.output_path:
+        log.error("--with-gomod requires -o/--output")
+        sys.exit(1)
+
+    if args.with_gomod and not config.build.module:
+        log.error("--with-gomod requires build.module in config")
+        sys.exit(1)
+
     try:
         source_file = args.input_path.name
         if args.output_path:
@@ -84,6 +97,10 @@ def main() -> None:
                 config, args.output_path, source_file=source_file
             )
             log.info("Generated: %s", args.output_path)
+
+            if args.with_gomod:
+                generator.generate_gomod_to_file(config, args.output_path.parent)
+                log.info("Generated: %s", args.output_path.parent / "go.mod")
         else:
             code = generator.generate(config, source_file=source_file)
             sys.stdout.write(code)

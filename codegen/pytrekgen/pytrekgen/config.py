@@ -92,6 +92,13 @@ class CustomCode(BaseModel):
     code: str = ""
 
 
+class BuildConfig(BaseModel):
+    """Build configuration for go.mod generation."""
+
+    module: str = ""
+    go_version: str = "1.23"
+
+
 # -----------------------------------------------------------------------------
 # Check Type Models
 # -----------------------------------------------------------------------------
@@ -223,6 +230,8 @@ class KafkaTopicExistsCheck(BaseCheck):
     type: Literal["kafka_topic_exists"] = "kafka_topic_exists"
     kafka_addr_env: str
     kafka_topic_env: str
+    on_connect: str = ""
+    on_partitions_read: str = ""
 
 
 class KafkaRoundtripCheck(BaseCheck):
@@ -253,6 +262,7 @@ class PostgresConnectCheck(BaseCheck):
 
     type: Literal["postgres_connect"] = "postgres_connect"
     postgres_url_env: str
+    on_connect: str = ""
 
 
 class PostgresTablesEmptyCheck(BaseCheck):
@@ -261,6 +271,8 @@ class PostgresTablesEmptyCheck(BaseCheck):
     type: Literal["postgres_tables_empty"] = "postgres_tables_empty"
     postgres_url_env: str
     tables: list[str] = Field(default_factory=list)
+    message_before: str = ""
+    on_start: str = ""
 
 
 # --- Custom Check ---
@@ -328,6 +340,8 @@ class LabConfig(BaseModel):
     success_message: str = ""
 
     custom_code: CustomCode = Field(default_factory=CustomCode)
+
+    build: BuildConfig = Field(default_factory=BuildConfig)
 
     @property
     def env_prefix(self) -> str:

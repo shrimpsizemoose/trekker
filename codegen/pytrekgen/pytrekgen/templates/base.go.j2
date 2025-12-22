@@ -180,6 +180,59 @@ func httpCheck(ctx context.Context, url string, expectedStatus int, msgBefore, m
 	return nil
 }
 {% endif %}
+{% if config.has_kafka_checks %}
+
+func checkKafkaTopicExists(addr, topic, onConnectEvent, onPartitionsReadEvent string) error {
+	logger.Info.Printf("Проверяю наличие топика %s в Kafka...", topic)
+
+	conn, err := kafka.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("не удалось подключиться к Kafka: %w", err)
+	}
+	defer conn.Close()
+
+	if onConnectEvent != "" {
+		tracker.Ping(onConnectEvent, nil)
+	}
+
+	partitions, err := conn.ReadPartitions()
+	if err != nil {
+		return fmt.Errorf("не удалось прочитать партиции: %w", err)
+	}
+
+	if onPartitionsReadEvent != "" {
+		tracker.Ping(onPartitionsReadEvent, nil)
+	}
+
+	for _, p := range partitions {
+		if p.Topic == topic {
+			logger.Victory.Printf("Топик %s найден", topic)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("топик %s не найден в Kafka", topic)
+}
+{% endif %}
+{% if config.has_postgres_checks %}
+
+func checkPostgresTablesEmpty(db *sql.DB, tables []string, onStartEvent string) error {
+	if onStartEvent != "" {
+		tracker.Ping(onStartEvent, nil)
+	}
+	for _, table := range tables {
+		var count int
+		err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("проверка таблицы %s не удалась: %v", table, err)
+		}
+		if count > 0 {
+			return fmt.Errorf("таблица %s не пустая (записей: %d)", table, count)
+		}
+	}
+	return nil
+}
+{% endif %}
 
 {% for check in config.checks if check.type == "param_equals" %}
 func checkParam{{ check.env_var }}() bool {
@@ -260,8 +313,23 @@ func main() {
 	_ = env.GetEnvOrDefault("{{ config.env_prefix }}_{{ opt.name }}", "{{ opt.default }}", "{{ opt.message }}")
 {% endfor %}
 {% endif %}
+{% if config.optional_env_int %}
+	// Get optional int environment variables with defaults
+{% for opt in config.optional_env_int %}
+	{{ opt.name | lower_camel }} := env.GetEnvIntOrDefault("{{ config.env_prefix }}_{{ opt.name }}", {{ opt.default }}, "{{ opt.message }}")
+	_ = {{ opt.name | lower_camel }}
+{% endfor %}
+{% endif %}
+{% if config.has_postgres_checks %}
+	// Connect to PostgreSQL
+	var db *sql.DB
+	var err error
+{% endif %}
 
 {% for check in config.checks %}
+{% if check.skip_on_flag %}
+	if !*flag{{ check.skip_on_flag | title_case }} {
+{% endif %}
 {% if check.type == "param_equals" %}
 	if !checkParam{{ check.env_var }}() {
 		tracker.Ping("{{ check.on_failure.event }}", nil)
@@ -270,7 +338,6 @@ func main() {
 {% if check.on_success.event %}
 	tracker.Ping("{{ check.on_success.event }}", nil)
 {% endif %}
-
 {% elif check.type == "http_get" %}
 	if err := httpCheck(rootCtx,
 		{{ check.url | url_format(config.env_prefix) }},
@@ -287,7 +354,6 @@ func main() {
 {% if check.on_success.event %}
 	tracker.Ping("{{ check.on_success.event }}", nil)
 {% endif %}
-
 {% elif check.type == "http_get_random_path" %}
 	if err := httpCheck(rootCtx,
 		getRandomPath({{ check.url | url_format(config.env_prefix) }}),
@@ -304,8 +370,49 @@ func main() {
 {% if check.on_success.event %}
 	tracker.Ping("{{ check.on_success.event }}", nil)
 {% endif %}
-
+{% elif check.type == "kafka_topic_exists" %}
+	if err := checkKafkaTopicExists(
+		os.Getenv("{{ config.env_prefix }}_{{ check.kafka_addr_env }}"),
+		os.Getenv("{{ config.env_prefix }}_{{ check.kafka_topic_env }}"),
+		"{{ check.on_connect }}",
+		"{{ check.on_partitions_read }}",
+	); err != nil {
+		logger.Error.Fatal(err)
+	}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
 {% endif %}
+{% elif check.type == "postgres_connect" %}
+	db, err = sql.Open("postgres", os.Getenv("{{ config.env_prefix }}_{{ check.postgres_url_env }}"))
+	if err != nil {
+		logger.Error.Fatal(err)
+	}
+	defer db.Close()
+{% if check.on_connect %}
+	tracker.Ping("{{ check.on_connect }}", nil)
+{% endif %}
+{% elif check.type == "postgres_tables_empty" %}
+{% if check.message_before %}
+	if err := checkPostgresTablesEmpty(db, []string{{ '{' }}{% for t in check.tables %}"{{ t }}", {% endfor %}{{ '}' }}, "{{ check.on_start }}"); err != nil {
+		logger.Error.Fatalf("{{ check.message_before }}: %v", err)
+	}
+{% else %}
+	if err := checkPostgresTablesEmpty(db, []string{{ '{' }}{% for t in check.tables %}"{{ t }}", {% endfor %}{{ '}' }}, "{{ check.on_start }}"); err != nil {
+		logger.Error.Fatal(err)
+	}
+{% endif %}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
+{% elif check.type == "custom" %}
+	if err := {{ check.func }}(rootCtx); err != nil {
+		logger.Error.Fatal(err)
+	}
+{% endif %}
+{% if check.skip_on_flag %}
+	}
+{% endif %}
+
 {% endfor %}
 	logger.Info.Println("----------------------------------------")
 	logger.Victory.Println("{{ config.success_message }}")

@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from .config import ConfirmField, LabConfig
+from .config import LabConfig
 
 
 class Generator:
@@ -65,15 +65,14 @@ class Generator:
 
         Example:
             http://${IP}:${PORT} -> fmt.Sprintf("http://%s:%s", os.Getenv("NPL_IP"), os.Getenv("NPL_PORT"), )
+
         """
         vars_found = re.findall(r"\$\{([^}]+)\}", url)
         if not vars_found:
             return f'"{url}"'
 
         format_str = re.sub(r"\$\{[^}]+\}", "%s", url)
-        getenvs = ", ".join(
-            f'os.Getenv("{env_prefix}_{var}")' for var in vars_found
-        )
+        getenvs = ", ".join(f'os.Getenv("{env_prefix}_{var}")' for var in vars_found)
         return f'fmt.Sprintf("{format_str}", {getenvs}, )'
 
     @classmethod
@@ -122,3 +121,28 @@ class Generator:
         code = self.generate(config, source_file=source_file)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(code)
+
+    def generate_gomod(self, config: LabConfig) -> str:
+        """Generate go.mod content.
+
+        Returns:
+            go.mod content as string
+
+        """
+        if not config.build.module:
+            raise ValueError("build.module is required for go.mod generation")
+
+        lines = [
+            f"module {config.build.module}",
+            "",
+            f"go {config.build.go_version}",
+        ]
+
+        return "\n".join(lines) + "\n"
+
+    def generate_gomod_to_file(self, config: LabConfig, output_dir: Path) -> None:
+        """Generate go.mod and write to file."""
+        content = self.generate_gomod(config)
+        output_path = output_dir / "go.mod"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(content)
