@@ -89,7 +89,9 @@ class CustomCode(BaseModel):
 
     imports: list[str] = Field(default_factory=list)
     types: str = ""
+    types_file: str = ""  # path to .go file with type definitions
     code: str = ""
+    code_file: str = ""  # path to .go file with custom functions
 
 
 class BuildConfig(BaseModel):

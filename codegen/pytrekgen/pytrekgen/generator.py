@@ -83,7 +83,10 @@ class Generator:
             initialized LabConfig object
 
         """
-        with Path(config_path).open() as f:
+        config_path = Path(config_path)
+        config_dir = config_path.parent
+
+        with config_path.open() as f:
             data = yaml.safe_load(f)
 
         # Handle confirm_display which can be strings or dicts
@@ -95,6 +98,26 @@ class Generator:
                 else:
                     normalized.append(item)
             data["confirm_display"] = normalized
+
+        # Handle custom_code file references
+        if "custom_code" in data:
+            cc = data["custom_code"]
+
+            # Read types from file if specified
+            if cc.get("types_file"):
+                types_path = config_dir / cc["types_file"]
+                file_content = types_path.read_text()
+                # Merge: file content first, then inline
+                cc["types"] = file_content + "\n" + cc.get("types", "")
+                cc["types"] = cc["types"].strip()
+
+            # Read code from file if specified
+            if cc.get("code_file"):
+                code_path = config_dir / cc["code_file"]
+                file_content = code_path.read_text()
+                # Merge: file content first, then inline
+                cc["code"] = file_content + "\n" + cc.get("code", "")
+                cc["code"] = cc["code"].strip()
 
         return LabConfig.model_validate(data)
 
