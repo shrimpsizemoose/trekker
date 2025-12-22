@@ -30,6 +30,7 @@ class Generator:
         self.env.filters["lower_camel"] = self._lower_camel
         self.env.filters["url_to_format"] = self._url_to_format
         self.env.filters["extract_vars"] = self._extract_vars
+        self.env.filters["url_format"] = self._url_format
 
     @staticmethod
     def _quote(value: str) -> str:
@@ -57,6 +58,23 @@ class Generator:
     def _extract_vars(url: str) -> list[str]:
         """Extract variable names from 'http://${VAR1}/${VAR2}'."""
         return re.findall(r"\$\{([^}]+)\}", url)
+
+    @staticmethod
+    def _url_format(url: str, env_prefix: str) -> str:
+        """Convert URL with ${VAR} placeholders to Go fmt.Sprintf call.
+
+        Example:
+            http://${IP}:${PORT} -> fmt.Sprintf("http://%s:%s", os.Getenv("NPL_IP"), os.Getenv("NPL_PORT"), )
+        """
+        vars_found = re.findall(r"\$\{([^}]+)\}", url)
+        if not vars_found:
+            return f'"{url}"'
+
+        format_str = re.sub(r"\$\{[^}]+\}", "%s", url)
+        getenvs = ", ".join(
+            f'os.Getenv("{env_prefix}_{var}")' for var in vars_found
+        )
+        return f'fmt.Sprintf("{format_str}", {getenvs}, )'
 
     @classmethod
     def load_config(cls, config_path: Path) -> LabConfig:

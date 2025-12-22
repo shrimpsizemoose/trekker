@@ -159,6 +159,8 @@ class HTTPGetCheck(BaseCheck):
     expected_status: int = 200
     message_before: str = ""
     message_success: str = ""
+    on_request: str = ""
+    on_response: str = ""
 
 
 class HTTPGetRandomPathCheck(BaseCheck):
@@ -169,6 +171,8 @@ class HTTPGetRandomPathCheck(BaseCheck):
     expected_status: int = 200
     message_before: str = ""
     message_success: str = ""
+    on_request: str = ""
+    on_response: str = ""
 
 
 class HTTPRequestCheck(BaseCheck):
@@ -309,7 +313,10 @@ class LabConfig(BaseModel):
 
     flags: list[Flag] = Field(default_factory=list)
 
-    usage_text: str = ""
+    usage_header: str = ""
+    usage_vars: str = ""
+    usage_docker: str = ""  # optional, can contain ${IMAGE}
+    usage_debug: str = ""   # optional, can contain ${DEBUG}
     confirm_display: list[ConfirmField | str] = Field(default_factory=list)
 
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)

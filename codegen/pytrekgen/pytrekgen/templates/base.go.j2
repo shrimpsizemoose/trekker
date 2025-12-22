@@ -85,7 +85,29 @@ var flag{{ flag.name | title_case }} *{{ flag.type }}
 {% endif %}
 
 func setupUsage() {
-	cli.SetupUsage(fmt.Sprintf(`{{ config.usage_text | replace("${ENV_PREFIX}", config.env_prefix) | replace("${IMAGE}", "%s") | replace("${DEBUG}", "%s") }}`, os.Getenv("{{ config.env_prefix }}_IMAGE"), os.Getenv("{{ config.env_prefix }}_DEBUG")))
+{% set has_image = config.usage_docker and "${IMAGE}" in config.usage_docker %}
+{% set has_debug = config.usage_debug and "${DEBUG}" in config.usage_debug %}
+{% if has_image or has_debug %}
+	cli.SetupUsage(fmt.Sprintf(`{{ config.usage_header | replace("${ENV_PREFIX}", config.env_prefix) }}
+{{ config.usage_vars | replace("${ENV_PREFIX}", config.env_prefix) }}
+{% if config.usage_docker %}
+{{ config.usage_docker | replace("${ENV_PREFIX}", config.env_prefix) | replace("${IMAGE}", "%s") }}
+{% endif %}
+{% if config.usage_debug %}
+{{ config.usage_debug | replace("${ENV_PREFIX}", config.env_prefix) | replace("${DEBUG}", "%s") }}
+{% endif %}
+`{% if has_image %}, os.Getenv("{{ config.env_prefix }}_IMAGE"){% endif %}{% if has_debug %}, os.Getenv("{{ config.env_prefix }}_DEBUG"){% endif %}))
+{% else %}
+	cli.SetupUsage(`{{ config.usage_header | replace("${ENV_PREFIX}", config.env_prefix) }}
+{{ config.usage_vars | replace("${ENV_PREFIX}", config.env_prefix) }}
+{% if config.usage_docker %}
+{{ config.usage_docker | replace("${ENV_PREFIX}", config.env_prefix) }}
+{% endif %}
+{% if config.usage_debug %}
+{{ config.usage_debug | replace("${ENV_PREFIX}", config.env_prefix) }}
+{% endif %}
+`)
+{% endif %}
 }
 
 func confirmSettings() bool {
@@ -105,6 +127,59 @@ func confirmSettings() bool {
 
 	return cli.ConfirmAction(message)
 }
+{% if config.has_http_checks %}
+
+var randValues = []byte("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+func getRandomPath(baseURL string) string {
+	size, err := rand.Int(rand.Reader, big.NewInt(118))
+	if err != nil {
+		panic(err)
+	}
+
+	buf := make([]byte, 10+size.Int64())
+	_, err = rand.Reader.Read(buf)
+	if err != nil {
+		panic(err)
+	}
+
+	ln := byte(len(randValues))
+	for i, v := range buf {
+		buf[i] = randValues[v%ln]
+	}
+
+	return fmt.Sprintf("%s/%s", baseURL, string(buf))
+}
+
+func httpCheck(ctx context.Context, url string, expectedStatus int, msgBefore, msgSuccess, msgFail, onRequestEvent, onResponseEvent string) error {
+	logger.Info.Printf("%s: %s", msgBefore, url)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	if onRequestEvent != "" {
+		tracker.Ping(onRequestEvent, nil)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if onResponseEvent != "" {
+		tracker.Ping(onResponseEvent, nil)
+	}
+
+	if resp.StatusCode != expectedStatus {
+		return fmt.Errorf("%s, получил %s", msgFail, resp.Status)
+	}
+	logger.Victory.Print(msgSuccess)
+	return nil
+}
+{% endif %}
 
 {% for check in config.checks if check.type == "param_equals" %}
 func checkParam{{ check.env_var }}() bool {
@@ -179,12 +254,52 @@ func main() {
 
 	// LET'S GOOOOOOO
 	tracker.PingStart()
+{% if config.optional_env %}
+	// Get optional string environment variables with defaults
+{% for opt in config.optional_env %}
+	_ = env.GetEnvOrDefault("{{ config.env_prefix }}_{{ opt.name }}", "{{ opt.default }}", "{{ opt.message }}")
+{% endfor %}
+{% endif %}
 
 {% for check in config.checks %}
 {% if check.type == "param_equals" %}
 	if !checkParam{{ check.env_var }}() {
 		tracker.Ping("{{ check.on_failure.event }}", nil)
 		logger.Error.Fatalf("{{ check.on_failure.message }}")
+	}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
+
+{% elif check.type == "http_get" %}
+	if err := httpCheck(rootCtx,
+		{{ check.url | url_format(config.env_prefix) }},
+		{{ check.expected_status }},
+		"{{ check.message_before }}",
+		"{{ check.message_success }}",
+		"{{ check.on_failure.message }}",
+		"{{ check.on_request }}",
+		"{{ check.on_response }}",
+	); err != nil {
+		tracker.Ping("{{ check.on_failure.event }}", nil)
+		logger.Error.Fatal(err)
+	}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
+
+{% elif check.type == "http_get_random_path" %}
+	if err := httpCheck(rootCtx,
+		getRandomPath({{ check.url | url_format(config.env_prefix) }}),
+		{{ check.expected_status }},
+		"{{ check.message_before }}",
+		"{{ check.message_success }}",
+		"{{ check.on_failure.message }}",
+		"{{ check.on_request }}",
+		"{{ check.on_response }}",
+	); err != nil {
+		tracker.Ping("{{ check.on_failure.event }}", nil)
+		logger.Error.Fatal(err)
 	}
 {% if check.on_success.event %}
 	tracker.Ping("{{ check.on_success.event }}", nil)
