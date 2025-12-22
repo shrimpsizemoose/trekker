@@ -180,6 +180,27 @@ func httpCheck(ctx context.Context, url string, expectedStatus int, msgBefore, m
 	return nil
 }
 {% endif %}
+{% if config.has_forbidden_addr_checks %}
+
+func checkForbiddenAddress(envVar string, forbidden []string, failEvent, failMsg string) error {
+	addr := os.Getenv(envVar)
+	// Extract host from host:port format
+	host := addr
+	if idx := strings.LastIndex(addr, ":"); idx != -1 {
+		host = addr[:idx]
+	}
+
+	for _, f := range forbidden {
+		if host == f || addr == f {
+			if failEvent != "" {
+				tracker.Ping(failEvent, nil)
+			}
+			logger.Error.Fatalf("%s", failMsg)
+		}
+	}
+	return nil
+}
+{% endif %}
 {% if config.has_kafka_checks %}
 
 func checkKafkaTopicExists(addr, topic, onConnectEvent, onPartitionsReadEvent string) error {
@@ -212,6 +233,71 @@ func checkKafkaTopicExists(addr, topic, onConnectEvent, onPartitionsReadEvent st
 	}
 
 	return fmt.Errorf("топик %s не найден в Kafka", topic)
+}
+
+func kafkaRoundtrip(ctx context.Context, addr, topic string, msgCount, waitSec int, generator string, onFailEvent, onSuccessEvent string) error {
+	logger.Info.Printf("Запускаю roundtrip тест: %d сообщений в топик %s", msgCount, topic)
+
+	// Generate messages
+	messages := make([]string, msgCount)
+	for i := 0; i < msgCount; i++ {
+		switch generator {
+		case "sequential":
+			messages[i] = fmt.Sprintf("test-message-%d", i)
+		case "timestamp":
+			messages[i] = fmt.Sprintf("msg-%d-%d", i, time.Now().UnixNano())
+		case "uuid":
+			messages[i] = fmt.Sprintf("msg-%d-%d", i, time.Now().UnixNano())
+		default:
+			messages[i] = fmt.Sprintf("test-message-%d", i)
+		}
+	}
+
+	// Produce messages
+	writer := infra.NewKafkaWriter(addr, topic)
+	defer writer.Close()
+
+	kafkaMessages := make([]kafka.Message, len(messages))
+	for i, msg := range messages {
+		kafkaMessages[i] = kafka.Message{Value: []byte(msg)}
+	}
+
+	if err := writer.WriteMessages(ctx, kafkaMessages...); err != nil {
+		if onFailEvent != "" {
+			tracker.Ping(onFailEvent, nil)
+		}
+		return fmt.Errorf("не удалось отправить сообщения: %w", err)
+	}
+	logger.Victory.Printf("Отправлено %d сообщений", msgCount)
+
+	// Wait
+	logger.Info.Printf("Жду %d секунд...", waitSec)
+	time.Sleep(time.Duration(waitSec) * time.Second)
+
+	// Consume messages
+	reader := infra.NewKafkaReader(addr, topic, "roundtrip-checker")
+	defer reader.Close()
+
+	received := 0
+	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	for received < msgCount {
+		_, err := reader.ReadMessage(readCtx)
+		if err != nil {
+			if onFailEvent != "" {
+				tracker.Ping(onFailEvent, nil)
+			}
+			return fmt.Errorf("не удалось прочитать сообщение %d/%d: %w", received+1, msgCount, err)
+		}
+		received++
+	}
+
+	logger.Victory.Printf("Получено %d сообщений", received)
+	if onSuccessEvent != "" {
+		tracker.Ping(onSuccessEvent, nil)
+	}
+	return nil
 }
 {% endif %}
 {% if config.has_postgres_checks %}
@@ -338,6 +424,16 @@ func main() {
 {% if check.on_success.event %}
 	tracker.Ping("{{ check.on_success.event }}", nil)
 {% endif %}
+{% elif check.type == "forbidden_address" %}
+	checkForbiddenAddress(
+		"{{ config.env_prefix }}_{{ check.env_var }}",
+		[]string{{ '{' }}{% for f in check.forbidden %}"{{ f }}", {% endfor %}{{ '}' }},
+		"{{ check.on_failure.event }}",
+		"{{ check.on_failure.message }}",
+	)
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
 {% elif check.type == "http_get" %}
 	if err := httpCheck(rootCtx,
 		{{ check.url | url_format(config.env_prefix) }},
@@ -382,6 +478,19 @@ func main() {
 {% if check.on_success.event %}
 	tracker.Ping("{{ check.on_success.event }}", nil)
 {% endif %}
+{% elif check.type == "kafka_roundtrip" %}
+	if err := kafkaRoundtrip(
+		rootCtx,
+		os.Getenv("{{ config.env_prefix }}_{{ check.kafka_addr_env }}"),
+		os.Getenv("{{ config.env_prefix }}_{{ check.kafka_topic_env }}"),
+		{{ check.message_count }},
+		{{ check.wait_seconds }},
+		"{{ check.message_generator }}",
+		"{{ check.on_failure.event }}",
+		"{{ check.on_success.event }}",
+	); err != nil {
+		logger.Error.Fatal(err)
+	}
 {% elif check.type == "postgres_connect" %}
 	db, err = sql.Open("postgres", os.Getenv("{{ config.env_prefix }}_{{ check.postgres_url_env }}"))
 	if err != nil {

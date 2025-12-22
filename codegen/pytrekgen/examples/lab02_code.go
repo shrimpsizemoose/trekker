@@ -1,3 +1,5 @@
+//go:build ignore
+
 const likeProb = 0.85
 const numMessages = 100_000
 const numUsers = 1_000

@@ -1,3 +1,5 @@
+//go:build ignore
+
 type Event struct {
 	EventType string    `json:"event_type"`
 	UserID    string    `json:"user_id"`
