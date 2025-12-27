@@ -8,7 +8,6 @@ import (
 	"bufio"
 {% endif %}
 {% if config.has_http_batch_checks %}
-	"bytes"
 	_ "embed"
 {% endif %}
 {% if config.has_context %}
@@ -78,6 +77,16 @@ var tracker analytics.Tracker
 {% for flag in config.flags %}
 var flag{{ flag.name | title_case }} *{{ flag.type }}
 {% endfor %}
+{% endif %}
+{% if config.has_http_batch_checks %}
+
+// batchRequestData stores data for http_batch_repeat reuse
+type batchRequestData struct {
+	requestBody string
+	testData    map[string]interface{}
+}
+
+var batchResults = make(map[string][]batchRequestData)
 {% endif %}
 {% if config.custom_code.types %}
 
@@ -322,6 +331,80 @@ func checkPostgresTablesEmpty(db *sql.DB, tables []string, onStartEvent string) 
 	return nil
 }
 {% endif %}
+{% if config.has_http_batch_checks %}
+
+// renderBatchTemplate replaces {% raw %}{{.field}}{% endraw %} placeholders with values from data
+func renderBatchTemplate(tmpl string, data map[string]interface{}) string {
+	result := tmpl
+	for key, val := range data {
+		placeholder := "{% raw %}{{.{% endraw %}" + key + "{% raw %}}}{% endraw %}"
+		var strVal string
+		switch v := val.(type) {
+		case float64:
+			if v == float64(int64(v)) {
+				strVal = fmt.Sprintf("%d", int64(v))
+			} else {
+				strVal = fmt.Sprintf("%v", v)
+			}
+		default:
+			strVal = fmt.Sprintf("%v", v)
+		}
+		result = strings.ReplaceAll(result, placeholder, strVal)
+	}
+	return result
+}
+
+// getJSONFieldAsString extracts a field from JSON map and converts to string
+func getJSONFieldAsString(data map[string]interface{}, field string) (string, bool) {
+	val, ok := data[field]
+	if !ok {
+		return "", false
+	}
+	switch v := val.(type) {
+	case string:
+		return v, true
+	case float64:
+		if v == float64(int64(v)) {
+			return fmt.Sprintf("%d", int64(v)), true
+		}
+		return fmt.Sprintf("%v", v), true
+	case bool:
+		return fmt.Sprintf("%t", v), true
+	case nil:
+		return "null", true
+	default:
+		return fmt.Sprintf("%v", v), true
+	}
+}
+
+// httpBatchRequest sends a single HTTP request and returns parsed JSON response
+func httpBatchRequest(ctx context.Context, method, url, contentType, body string) (map[string]interface{}, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w (body: %s)", err, string(respBody))
+	}
+	return result, nil
+}
+{% endif %}
 
 {% for check in config.checks if check.type == "param_equals" %}
 func checkParam{{ check.env_var }}() bool {
@@ -524,6 +607,150 @@ func main() {
 {% if check.on_success.event %}
 	tracker.Ping("{{ check.on_success.event }}", nil)
 {% endif %}
+{% elif check.type == "http_batch" %}
+	{
+		// http_batch: {{ check.name }}
+{% if check.message_before %}
+		logger.Info.Println("{{ check.message_before }}")
+{% endif %}
+		var batchTestData_{{ check.name }} []map[string]interface{}
+		if err := json.Unmarshal({{ check.test_data }}Data, &batchTestData_{{ check.name }}); err != nil {
+			logger.Error.Fatalf("Failed to parse test data '{{ check.test_data }}': %v", err)
+		}
+
+		batchErrors_{{ check.name }} := 0
+		batchResults["{{ check.name }}"] = nil
+
+		for i, item := range batchTestData_{{ check.name }} {
+			body := renderBatchTemplate(`{{ check.request_template }}`, item)
+
+			respData, err := httpBatchRequest(rootCtx, "{{ check.method }}", {{ check.url | url_format(config.env_prefix) }}, "{{ check.content_type }}", body)
+			if err != nil {
+				logger.Error.Printf("Item %d: %v", i, err)
+				batchErrors_{{ check.name }}++
+				continue
+			}
+
+			checkFailed := false
+{% for rc in check.response_checks %}
+			{
+				actual, ok := getJSONFieldAsString(respData, "{{ rc.field }}")
+				if !ok {
+					logger.Error.Printf("Item %d: response missing field '{{ rc.field }}'", i)
+					checkFailed = true
+				} else {
+{% if rc.expected %}
+					expected := "{{ rc.expected }}"
+{% elif rc.from_data %}
+					expected, _ := getJSONFieldAsString(item, "{{ rc.from_data }}")
+{% endif %}
+					if actual != expected {
+						logger.Error.Printf("Item %d: field '{{ rc.field }}' = '%s', expected '%s'", i, actual, expected)
+						checkFailed = true
+					}
+				}
+			}
+{% endfor %}
+
+			if checkFailed {
+				batchErrors_{{ check.name }}++
+			} else {
+				batchResults["{{ check.name }}"] = append(batchResults["{{ check.name }}"], batchRequestData{
+					requestBody: body,
+					testData:    item,
+				})
+			}
+
+{% if check.delay_ms > 0 %}
+			if i < len(batchTestData_{{ check.name }})-1 {
+				time.Sleep({{ check.delay_ms }} * time.Millisecond)
+			}
+{% endif %}
+		}
+
+		if batchErrors_{{ check.name }} > 0 {
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+{% endif %}
+			logger.Error.Fatalf("{{ check.name }}: %d/%d failures", batchErrors_{{ check.name }}, len(batchTestData_{{ check.name }}))
+		}
+{% if check.message_success %}
+		logger.Victory.Printf("{{ check.message_success }} (%d/%d)", len(batchTestData_{{ check.name }}), len(batchTestData_{{ check.name }}))
+{% endif %}
+{% if check.on_success.event %}
+		tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
+	}
+{% elif check.type == "http_batch_repeat" %}
+	{
+		// http_batch_repeat: {{ check.name }} (reuses {{ check.reuse }})
+{% if check.message_before %}
+		logger.Info.Println("{{ check.message_before }}")
+{% endif %}
+		prevResults := batchResults["{{ check.reuse }}"]
+		if len(prevResults) == 0 {
+			logger.Error.Fatalf("No previous results for '{{ check.reuse }}'")
+		}
+
+		repeatErrors_{{ check.name }} := 0
+
+		{% set original = namespace(check=none) %}
+		{% for c in config.checks if c.name == check.reuse %}
+		{% set original.check = c %}
+		{% endfor %}
+		for i, prev := range prevResults {
+			respData, err := httpBatchRequest(rootCtx, "{{ original.check.method }}", {{ original.check.url | url_format(config.env_prefix) }}, "{{ original.check.content_type }}", prev.requestBody)
+			if err != nil {
+				logger.Error.Printf("Item %d: %v", i, err)
+				repeatErrors_{{ check.name }}++
+				continue
+			}
+
+			checkFailed := false
+{% for rc in check.response_checks %}
+			{
+				actual, ok := getJSONFieldAsString(respData, "{{ rc.field }}")
+				if !ok {
+					logger.Error.Printf("Item %d: response missing field '{{ rc.field }}'", i)
+					checkFailed = true
+				} else {
+{% if rc.expected %}
+					expected := "{{ rc.expected }}"
+{% elif rc.from_data %}
+					expected, _ := getJSONFieldAsString(prev.testData, "{{ rc.from_data }}")
+{% endif %}
+					if actual != expected {
+						logger.Error.Printf("Item %d: field '{{ rc.field }}' = '%s', expected '%s'", i, actual, expected)
+						checkFailed = true
+					}
+				}
+			}
+{% endfor %}
+
+			if checkFailed {
+				repeatErrors_{{ check.name }}++
+			}
+
+{% if original.check.delay_ms > 0 %}
+			if i < len(prevResults)-1 {
+				time.Sleep({{ original.check.delay_ms }} * time.Millisecond)
+			}
+{% endif %}
+		}
+
+		if repeatErrors_{{ check.name }} > 0 {
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+{% endif %}
+			logger.Error.Fatalf("{{ check.name }}: %d/%d failures", repeatErrors_{{ check.name }}, len(prevResults))
+		}
+{% if check.message_success %}
+		logger.Victory.Printf("{{ check.message_success }} (%d/%d)", len(prevResults), len(prevResults))
+{% endif %}
+{% if check.on_success.event %}
+		tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
+	}
 {% elif check.type == "custom" %}
 	if err := {{ check.func }}(rootCtx); err != nil {
 		logger.Error.Fatal(err)

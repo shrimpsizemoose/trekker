@@ -219,6 +219,7 @@ class HTTPBatchRepeatCheck(BaseCheck):
 
     type: Literal["http_batch_repeat"] = "http_batch_repeat"
     reuse: str  # Name of the http_batch check to repeat
+    response_checks: list[ResponseCheck] = Field(default_factory=list)  # Override original checks
     message_before: str = ""
     message_success: str = ""
 
@@ -440,6 +441,7 @@ class LabConfig(BaseModel):
             "time": [self.has_kafka_checks, self.has_wait_checks, self.has_http_batch_checks],
             "strings": [self.has_param_checks, self.has_forbidden_addr_checks, self.has_http_request_checks, self.has_http_batch_checks],
             "encoding/json": [self.has_http_request_checks, self.has_http_batch_checks],
+            "io": [self.has_http_request_checks, self.has_http_batch_checks],
             "net/http": [self.has_http_checks, self.has_http_request_checks, self.has_http_batch_checks],
             "database/sql": [self.has_postgres_checks],
             "flag": [self.has_flags],
