@@ -8,8 +8,7 @@ Go-библиотека и Py-кодогенератор для создания
 |-------|------------|
 | `analytics/` | Отправка событий аналитики на удалённый сервер |
 | `cli/` | Подтверждение действий и справка по использованию |
-| `codegen/pytrekgen/` | Генерация Go-кода из YAML-конфигов (Python + Jinja2) |
-| `codegen/` | ~~Go-кодогенератор из Lua~~ (deprecated) |
+| `pytrekgen/` | Генерация Go-кода из YAML-конфигов (Python + Jinja2) |
 | `env/` | Загрузка и валидация переменных окружения |
 | `infra/` | Kafka reader/writer с батчингом |
 | `logger/` | Логгеры с эмодзи-префиксами |
@@ -20,14 +19,14 @@ Go-библиотека и Py-кодогенератор для создания
 Генерация чекеров из декларативных YAML-конфигов:
 
 ```bash
-cd codegen/pytrekgen
+cd pytrekgen
 uv run pytrekgen -i examples/lab02.yaml -o build/main.go --with-gomod
 ```
 
 ### Установка
 
 ```bash
-cd codegen/pytrekgen
+cd pytrekgen
 uv sync  # или pip install -e .
 ```
 
@@ -111,7 +110,10 @@ custom_code:
 | `http_get` | HTTP GET запрос с проверкой статуса |
 | `http_get_random_path` | HTTP GET с рандомным путём (для проверки 404) |
 | `http_request` | Полный HTTP запрос с методом, телом, авторизацией |
+| `http_batch` | Итерация по тестовым данным с HTTP-запросами |
+| `http_batch_repeat` | Повтор batch-запросов (для проверки кэша) |
 | `kafka_topic_exists` | Проверка существования топика Kafka |
+| `kafka_roundtrip` | Отправка и получение сообщений через Kafka |
 | `postgres_connect` | Проверка подключения к PostgreSQL |
 | `postgres_tables_empty` | Проверка что таблицы пустые |
 | `custom` | Вызов кастомной Go-функции |
@@ -131,7 +133,7 @@ pytrekgen -i config.yaml [-o output.go] [--with-gomod] [--debug]
 
 ```bash
 # Генерация
-cd codegen/pytrekgen
+cd pytrekgen
 uv run pytrekgen -i examples/lab02.yaml -o /tmp/checker/main.go --with-gomod
 
 # Сборка
@@ -177,9 +179,9 @@ jobs:
 
       - name: Generate checker
         run: |
-          cd codegen/pytrekgen
-          uv run pytrekgen -i ../../checkers/lab-02/config.yaml \
-            -o ../../checkers/lab-02/build/main.go --with-gomod
+          cd pytrekgen
+          uv run pytrekgen -i ../checkers/lab-02/config.yaml \
+            -o ../checkers/lab-02/build/main.go --with-gomod
 
       - uses: docker/login-action@v3
         with:
@@ -193,19 +195,6 @@ jobs:
           push: true
           tags: ghcr.io/${{ github.repository }}/lab-02:${{ github.sha }}
 ```
-
-## Legacy: Lua + Go codegen
-
-> **Deprecated**: Кодогенератор на Go (`codegen/cmd/trekgen`) и Lua-конфиги устарели.
-> All cool kids use pytrekgen (YAML + Python) для новых чекеров.
-> Legacy-код пока оставлен, но щащаща я допилю всё и выкину его
-
-```bash
-# не надо!!
-go run ./codegen/cmd/trekgen -input codegen/examples/lab00.lua -output checker.go
-```
-
-Builder image для legacy подхода: `ghcr.io/shrimpsizemoose/trekker-builder`
 
 ## Зависимости
 
