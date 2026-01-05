@@ -54,10 +54,9 @@ class TestLabMeta:
             LabMeta(id="01", env_prefix="NPL")
         assert "name" in str(exc_info.value)
 
-    def test_missing_env_prefix(self):
-        with pytest.raises(ValidationError) as exc_info:
-            LabMeta(id="01", name="Test")
-        assert "env_prefix" in str(exc_info.value)
+    def test_missing_env_prefix_defaults_to_empty(self):
+        meta = LabMeta(id="01", name="Test")
+        assert meta.env_prefix == ""
 
 
 class TestEnvVar:

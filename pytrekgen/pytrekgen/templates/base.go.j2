@@ -105,7 +105,7 @@ func setupUsage() {
 {% if config.usage_debug %}
 {{ config.usage_debug | replace("${ENV_PREFIX}", config.env_prefix) | replace("${DEBUG}", "%s") }}
 {% endif %}
-`{% if has_image %}, os.Getenv("{{ config.env_prefix }}_IMAGE"){% endif %}{% if has_debug %}, os.Getenv("{{ config.env_prefix }}_DEBUG"){% endif %}))
+`{% if has_image %}, os.Getenv("{{ "IMAGE" | prefixed_env(config.env_prefix) }}"){% endif %}{% if has_debug %}, os.Getenv("{{ "DEBUG" | prefixed_env(config.env_prefix) }}"){% endif %}))
 {% else %}
 	cli.SetupUsage(`{{ config.usage_header | replace("${ENV_PREFIX}", config.env_prefix) }}
 {{ config.usage_vars | replace("${ENV_PREFIX}", config.env_prefix) }}
@@ -122,14 +122,14 @@ func setupUsage() {
 func confirmSettings() bool {
 	message := fmt.Sprintf(`Вот такие настройки я считал:
 {% for field in confirm_fields %}
-{{ config.env_prefix }}_{{ field.name }}=%s
+{{ field.name | prefixed_env(config.env_prefix) }}=%s
 {% endfor %}
 `,
 {% for field in confirm_fields %}
 {% if field.masked %}
-		utils.MaskToken(os.Getenv("{{ config.env_prefix }}_{{ field.name }}")),
+		utils.MaskToken(os.Getenv("{{ field.name | prefixed_env(config.env_prefix) }}")),
 {% else %}
-		os.Getenv("{{ config.env_prefix }}_{{ field.name }}"),
+		os.Getenv("{{ field.name | prefixed_env(config.env_prefix) }}"),
 {% endif %}
 {% endfor %}
 	)
@@ -408,7 +408,7 @@ func httpBatchRequest(ctx context.Context, method, url, contentType, body string
 
 {% for check in config.checks if check.type == "param_equals" %}
 func checkParam{{ check.env_var }}() bool {
-	param := os.Getenv("{{ config.env_prefix }}_{{ check.env_var }}")
+	param := os.Getenv("{{ check.env_var | prefixed_env(config.env_prefix) }}")
 {% if check.case_insensitive %}
 	value := strings.ToLower(param)
 	return value == "{{ check.expected }}"
@@ -448,7 +448,7 @@ func main() {
 	env.LoadEnv()
 	env.RequireEnv(map[string]string{
 {% for ev in config.required_env %}
-		"{{ config.env_prefix }}_{{ ev.name }}": "{{ ev.error }}",
+		"{{ ev.name | prefixed_env(config.env_prefix) }}": "{{ ev.error }}",
 {% endfor %}
 	})
 
@@ -460,25 +460,25 @@ func main() {
 	tracker = analytics.NewOfflineAnalytics(analytics.Config{
 		CommonData: map[string]string{
 {% for key, env_var in config.analytics.common_data.items() %}
-			"{{ key }}": os.Getenv("{{ config.env_prefix }}_{{ env_var }}"),
+			"{{ key }}": os.Getenv("{{ env_var | prefixed_env(config.env_prefix) }}"),
 {% endfor %}
 		},
 	})
 {% else %}
 	tracker = analytics.NewAnalytics(analytics.Config{
-		BaseURL: os.Getenv("{{ config.env_prefix }}_MINERVA"),
+		BaseURL: os.Getenv("{{ "MINERVA" | prefixed_env(config.env_prefix) }}"),
 		SkipTLS: {{ "true" if config.analytics.skip_tls else "false" }},
 		CommonData: map[string]string{
 {% for key, env_var in config.analytics.common_data.items() %}
-			"{{ key }}": os.Getenv("{{ config.env_prefix }}_{{ env_var }}"),
+			"{{ key }}": os.Getenv("{{ env_var | prefixed_env(config.env_prefix) }}"),
 {% endfor %}
 		},
 		SecretHeaders: map[string]string{
 {% for header, value in config.analytics.headers.items() %}
 {% if value.startswith("env:") %}
-			"{{ header }}": os.Getenv("{{ config.env_prefix }}_{{ value[4:] }}"),
+			"{{ header }}": os.Getenv("{{ value[4:] | prefixed_env(config.env_prefix) }}"),
 {% elif value.startswith("Bearer env:") %}
-			"{{ header }}": "Bearer " + os.Getenv("{{ config.env_prefix }}_{{ value[11:] }}"),
+			"{{ header }}": "Bearer " + os.Getenv("{{ value[11:] | prefixed_env(config.env_prefix) }}"),
 {% else %}
 			"{{ header }}": "{{ value }}",
 {% endif %}
@@ -492,13 +492,13 @@ func main() {
 {% if config.optional_env %}
 	// Get optional string environment variables with defaults
 {% for opt in config.optional_env %}
-	_ = env.GetEnvOrDefault("{{ config.env_prefix }}_{{ opt.name }}", "{{ opt.default }}", "{{ opt.message }}")
+	_ = env.GetEnvOrDefault("{{ opt.name | prefixed_env(config.env_prefix) }}", "{{ opt.default }}", "{{ opt.message }}")
 {% endfor %}
 {% endif %}
 {% if config.optional_env_int %}
 	// Get optional int environment variables with defaults
 {% for opt in config.optional_env_int %}
-	{{ opt.name | lower_camel }} := env.GetEnvIntOrDefault("{{ config.env_prefix }}_{{ opt.name }}", {{ opt.default }}, "{{ opt.message }}")
+	{{ opt.name | lower_camel }} := env.GetEnvIntOrDefault("{{ opt.name | prefixed_env(config.env_prefix) }}", {{ opt.default }}, "{{ opt.message }}")
 	_ = {{ opt.name | lower_camel }}
 {% endfor %}
 {% endif %}
@@ -522,7 +522,7 @@ func main() {
 {% endif %}
 {% elif check.type == "forbidden_address" %}
 	checkForbiddenAddress(
-		"{{ config.env_prefix }}_{{ check.env_var }}",
+		"{{ check.env_var | prefixed_env(config.env_prefix) }}",
 		[]string{{ '{' }}{% for f in check.forbidden %}"{{ f }}", {% endfor %}{{ '}' }},
 		"{{ check.on_failure.event }}",
 		"{{ check.on_failure.message }}",
@@ -572,8 +572,8 @@ func main() {
 {% endif %}
 {% elif check.type == "kafka_topic_exists" %}
 	if err := checkKafkaTopicExists(
-		os.Getenv("{{ config.env_prefix }}_{{ check.kafka_addr_env }}"),
-		os.Getenv("{{ config.env_prefix }}_{{ check.kafka_topic_env }}"),
+		os.Getenv("{{ check.kafka_addr_env | prefixed_env(config.env_prefix) }}"),
+		os.Getenv("{{ check.kafka_topic_env | prefixed_env(config.env_prefix) }}"),
 		"{{ check.on_connect }}",
 		"{{ check.on_partitions_read }}",
 	); err != nil {
@@ -585,8 +585,8 @@ func main() {
 {% elif check.type == "kafka_roundtrip" %}
 	if err := kafkaRoundtrip(
 		rootCtx,
-		os.Getenv("{{ config.env_prefix }}_{{ check.kafka_addr_env }}"),
-		os.Getenv("{{ config.env_prefix }}_{{ check.kafka_topic_env }}"),
+		os.Getenv("{{ check.kafka_addr_env | prefixed_env(config.env_prefix) }}"),
+		os.Getenv("{{ check.kafka_topic_env | prefixed_env(config.env_prefix) }}"),
 		{{ check.message_count }},
 		{{ check.wait_seconds }},
 		"{{ check.message_generator }}",
@@ -596,7 +596,7 @@ func main() {
 		logger.Error.Fatal(err)
 	}
 {% elif check.type == "postgres_connect" %}
-	db, err = sql.Open("postgres", os.Getenv("{{ config.env_prefix }}_{{ check.postgres_url_env }}"))
+	db, err = sql.Open("postgres", os.Getenv("{{ check.postgres_url_env | prefixed_env(config.env_prefix) }}"))
 	if err != nil {
 		logger.Error.Fatal(err)
 	}

@@ -131,6 +131,42 @@ class TestUrlFormatFilter:
         assert 'os.Getenv("API_VERSION")' in result
 
 
+class TestPrefixedEnvFilter:
+    """Tests for the prefixed_env filter."""
+
+    def test_with_prefix(self):
+        result = Generator._prefixed_env("TOKEN", "NPL")
+        assert result == "NPL_TOKEN"
+
+    def test_with_empty_prefix(self):
+        result = Generator._prefixed_env("TOKEN", "")
+        assert result == "TOKEN"
+
+    def test_with_complex_name(self):
+        result = Generator._prefixed_env("LAB04_AIRFLOW_URL", "")
+        assert result == "LAB04_AIRFLOW_URL"
+
+    def test_with_prefix_and_complex_name(self):
+        result = Generator._prefixed_env("LAB04_AIRFLOW_URL", "NPL")
+        assert result == "NPL_LAB04_AIRFLOW_URL"
+
+
+class TestUrlFormatEmptyPrefix:
+    """Tests for url_format with empty prefix."""
+
+    def test_empty_prefix_single_var(self):
+        result = Generator._url_format("http://${HOST}/api", "")
+        assert 'os.Getenv("HOST")' in result
+        assert 'os.Getenv("_HOST")' not in result
+
+    def test_empty_prefix_multiple_vars(self):
+        result = Generator._url_format("http://${HOST}:${PORT}/api", "")
+        assert 'os.Getenv("HOST")' in result
+        assert 'os.Getenv("PORT")' in result
+        assert "_HOST" not in result
+        assert "_PORT" not in result
+
+
 class TestFiltersRegistration:
     """Test that filters are properly registered in the Jinja2 environment."""
 
@@ -142,3 +178,4 @@ class TestFiltersRegistration:
         assert "url_to_format" in filters
         assert "extract_vars" in filters
         assert "url_format" in filters
+        assert "prefixed_env" in filters

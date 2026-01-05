@@ -31,6 +31,7 @@ class Generator:
         self.env.filters["url_to_format"] = self._url_to_format
         self.env.filters["extract_vars"] = self._extract_vars
         self.env.filters["url_format"] = self._url_format
+        self.env.filters["prefixed_env"] = self._prefixed_env
 
     @staticmethod
     def _quote(value: str) -> str:
@@ -48,6 +49,18 @@ class Generator:
         """Convert 'UPPER_SNAKE' to 'upperSnake'."""
         parts = s.lower().split("_")
         return parts[0] + "".join(word.capitalize() for word in parts[1:])
+
+    @staticmethod
+    def _prefixed_env(name: str, prefix: str) -> str:
+        """Create env var name with optional prefix.
+
+        Example:
+            _prefixed_env("TOKEN", "NPL") -> "NPL_TOKEN"
+            _prefixed_env("TOKEN", "") -> "TOKEN"
+        """
+        if prefix:
+            return f"{prefix}_{name}"
+        return name
 
     @staticmethod
     def _url_to_format(url: str) -> str:
@@ -96,7 +109,10 @@ class Generator:
             return f'"{url}"'
 
         format_str = re.sub(r"\$\{[^}]+\}", "%s", url)
-        getenvs = ", ".join(f'os.Getenv("{env_prefix}_{var}")' for var in vars_found)
+        getenvs = ", ".join(
+            f'os.Getenv("{env_prefix}_{var}")' if env_prefix else f'os.Getenv("{var}")'
+            for var in vars_found
+        )
         return f'fmt.Sprintf("{format_str}", {getenvs}, )'
 
     @classmethod

@@ -14,7 +14,7 @@ class LabMeta(BaseModel):
 
     id: str
     name: str
-    env_prefix: str
+    env_prefix: str = ""
 
 
 class EnvVar(BaseModel):
