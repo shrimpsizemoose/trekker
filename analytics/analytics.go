@@ -119,3 +119,40 @@ func (a *Analytics) PingFinish() {
 	}
 	a.Ping("100_lab_finish", nil)
 }
+
+// OfflineAnalytics prints events to console instead of sending HTTP requests.
+// Use for testing and development.
+type OfflineAnalytics struct {
+	commonData map[string]string
+}
+
+func NewOfflineAnalytics(config Config) Tracker {
+	return &OfflineAnalytics{
+		commonData: config.CommonData,
+	}
+}
+
+func (o *OfflineAnalytics) Ping(eventType string, additionalData map[string]string) {
+	data := make(map[string]string)
+	for k, v := range o.commonData {
+		data[k] = v
+	}
+	for k, v := range additionalData {
+		data[k] = v
+	}
+
+	var pairs []string
+	for k, v := range data {
+		pairs = append(pairs, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	logger.Info.Printf("(offline analytics) %s %s", eventType, pairs)
+}
+
+func (o *OfflineAnalytics) PingStart() {
+	o.Ping("000_lab_start", nil)
+}
+
+func (o *OfflineAnalytics) PingFinish() {
+	o.Ping("100_lab_finish", nil)
+}

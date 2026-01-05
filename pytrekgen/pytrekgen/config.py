@@ -60,6 +60,7 @@ class AnalyticsConfig(BaseModel):
     """Analytics configuration."""
 
     skip_tls: bool = False
+    offline: bool = False  # print to console instead of sending over wire
     common_data: dict[str, str] = Field(default_factory=dict)
     headers: dict[str, str] = Field(default_factory=dict)
 
