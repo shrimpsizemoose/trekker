@@ -110,35 +110,53 @@ class BuildConfig(BaseModel):
 class BaseCheck(BaseModel):
     """Common fields for all check types."""
 
-    name: str = ""
-    skip_on_flag: str = ""
-    on_failure: FailureAction = Field(default_factory=FailureAction)
-    on_success: SuccessAction = Field(default_factory=SuccessAction)
+    name: str = Field(
+        default="",
+        description="Optional identifier for this check, used in logs and analytics",
+    )
+    skip_on_flag: str = Field(
+        default="",
+        description="Skip this check if the specified command-line flag is set",
+    )
+    on_failure: FailureAction = Field(
+        default_factory=FailureAction, description="Action to take when check fails"
+    )
+    on_success: SuccessAction = Field(
+        default_factory=SuccessAction, description="Action to take when check passes"
+    )
 
 
 class ParamEqualsCheck(BaseCheck):
     """Check that an environment variable equals an expected value."""
 
     type: Literal["param_equals"] = "param_equals"
-    env_var: str
-    expected: str
-    case_insensitive: bool = False
+    env_var: str = Field(description="Name of the environment variable to check")
+    expected: str = Field(description="Expected value for the environment variable")
+    case_insensitive: bool = Field(
+        default=False, description="If true, comparison is case-insensitive"
+    )
 
 
 class ForbiddenAddressCheck(BaseCheck):
     """Check that an address is not in a forbidden list."""
 
     type: Literal["forbidden_address"] = "forbidden_address"
-    env_var: str
-    forbidden: list[str] = Field(default_factory=list)
+    env_var: str = Field(
+        description="Name of environment variable containing the address to validate"
+    )
+    forbidden: list[str] = Field(
+        default_factory=list, description="List of forbidden addresses/patterns"
+    )
 
 
 class WaitCheck(BaseCheck):
     """Wait for a specified duration."""
 
     type: Literal["wait"] = "wait"
-    seconds: int
-    message: str = ""
+    seconds: int = Field(description="Number of seconds to wait")
+    message: str = Field(
+        default="", description="Optional message to display while waiting"
+    )
 
 
 # --- HTTP Checks ---
@@ -147,147 +165,244 @@ class WaitCheck(BaseCheck):
 class HTTPAuth(BaseModel):
     """HTTP authentication configuration."""
 
-    type: Literal["none", "basic", "bearer"] = "none"
-    user_env: str = ""
-    pass_env: str = ""
-    token_env: str = ""
+    type: Literal["none", "basic", "bearer"] = Field(
+        default="none", description="Authentication type: none, basic, or bearer"
+    )
+    user_env: str = Field(
+        default="", description="Environment variable name for username (basic auth)"
+    )
+    pass_env: str = Field(
+        default="", description="Environment variable name for password (basic auth)"
+    )
+    token_env: str = Field(
+        default="",
+        description="Environment variable name for bearer token (bearer auth)",
+    )
 
 
 class ResponseCheck(BaseModel):
     """Response field validation."""
 
-    field: str
-    expected: str = ""
-    from_data: str = ""
+    field: str = Field(
+        description="JSON field path to validate (e.g., 'user.id' or 'status')"
+    )
+    expected: str = Field(default="", description="Expected value for the field")
+    from_data: str = Field(
+        default="", description="Reference to test data field to compare against"
+    )
 
 
 class HTTPGetCheck(BaseCheck):
     """Simple HTTP GET check."""
 
     type: Literal["http_get"] = "http_get"
-    url: str
-    expected_status: int = 200
-    message_before: str = ""
-    message_success: str = ""
-    on_request: str = ""
-    on_response: str = ""
+    url: str = Field(
+        description="URL to request, supports ${VAR} substitution from environment variables"
+    )
+    expected_status: int = Field(
+        default=200, description="Expected HTTP status code (default: 200)"
+    )
+    message_before: str = Field(
+        default="", description="Message to display before making the request"
+    )
+    message_success: str = Field(
+        default="", description="Message to display on successful response"
+    )
+    on_request: str = Field(
+        default="", description="Analytics event to emit when request is sent"
+    )
+    on_response: str = Field(
+        default="", description="Analytics event to emit when response is received"
+    )
 
 
 class HTTPGetRandomPathCheck(BaseCheck):
-    """HTTP GET with random path segment."""
+    """HTTP GET with random path segment (useful for testing 404 handling)."""
 
     type: Literal["http_get_random_path"] = "http_get_random_path"
-    url: str
-    expected_status: int = 200
-    message_before: str = ""
-    message_success: str = ""
-    on_request: str = ""
-    on_response: str = ""
+    url: str = Field(description="Base URL, a random path segment will be appended")
+    expected_status: int = Field(
+        default=200, description="Expected HTTP status code (default: 200)"
+    )
+    message_before: str = Field(
+        default="", description="Message to display before making the request"
+    )
+    message_success: str = Field(
+        default="", description="Message to display on successful response"
+    )
+    on_request: str = Field(
+        default="", description="Analytics event to emit when request is sent"
+    )
+    on_response: str = Field(
+        default="", description="Analytics event to emit when response is received"
+    )
 
 
 class HTTPRequestCheck(BaseCheck):
-    """Full HTTP request with method, body, auth."""
+    """Full HTTP request with custom method, body, and authentication."""
 
     type: Literal["http_request"] = "http_request"
-    url: str
-    method: str = "GET"
-    expected_status: int = 200
-    message_before: str = ""
-    message_success: str = ""
-    content_type: str = ""
-    body: str = ""
-    auth: HTTPAuth = Field(default_factory=HTTPAuth)
-    response_checks: list[ResponseCheck] = Field(default_factory=list)
+    url: str = Field(description="Request URL, supports ${VAR} substitution")
+    method: str = Field(
+        default="GET", description="HTTP method (GET, POST, PUT, DELETE, etc.)"
+    )
+    expected_status: int = Field(default=200, description="Expected HTTP status code")
+    message_before: str = Field(
+        default="", description="Message to display before making the request"
+    )
+    message_success: str = Field(
+        default="", description="Message to display on successful response"
+    )
+    content_type: str = Field(default="", description="Content-Type header value")
+    body: str = Field(default="", description="Request body (for POST/PUT)")
+    auth: HTTPAuth = Field(
+        default_factory=HTTPAuth, description="Authentication configuration"
+    )
+    response_checks: list[ResponseCheck] = Field(
+        default_factory=list, description="List of response field validations"
+    )
 
 
 class HTTPBatchCheck(BaseCheck):
-    """Iterate over test data, send HTTP requests."""
+    """Iterate over test data, send multiple HTTP requests."""
 
     type: Literal["http_batch"] = "http_batch"
-    url: str
-    method: str = "POST"
-    content_type: str = "application/json"
-    test_data: str  # Name of embedded data
-    request_template: str
-    response_checks: list[ResponseCheck] = Field(default_factory=list)
-    delay_ms: int = 0
-    message_before: str = ""
-    message_success: str = ""
+    url: str = Field(description="Request URL, supports ${VAR} substitution")
+    method: str = Field(default="POST", description="HTTP method for all requests")
+    content_type: str = Field(
+        default="application/json", description="Content-Type header"
+    )
+    test_data: str = Field(
+        description="Name of embedded_data entry to use as test data"
+    )
+    request_template: str = Field(
+        description="Request body template with placeholders like {{.Field}}"
+    )
+    response_checks: list[ResponseCheck] = Field(
+        default_factory=list, description="Validations for each response"
+    )
+    delay_ms: int = Field(
+        default=0, description="Delay in milliseconds between requests"
+    )
+    message_before: str = Field(default="", description="Message before starting batch")
+    message_success: str = Field(
+        default="", description="Message after batch completes"
+    )
 
 
 class HTTPBatchRepeatCheck(BaseCheck):
-    """Repeat a previous http_batch check (e.g., for cache validation)."""
+    """Repeat a previous http_batch check (useful for cache validation)."""
 
     type: Literal["http_batch_repeat"] = "http_batch_repeat"
-    reuse: str  # Name of the http_batch check to repeat
-    response_checks: list[ResponseCheck] = Field(default_factory=list)  # Override original checks
-    message_before: str = ""
-    message_success: str = ""
+    reuse: str = Field(description="Name of the http_batch check to repeat")
+    response_checks: list[ResponseCheck] = Field(
+        default_factory=list, description="Override original response checks"
+    )
+    message_before: str = Field(
+        default="", description="Message before repeating batch"
+    )
+    message_success: str = Field(
+        default="", description="Message after repeat completes"
+    )
 
 
 # --- Kafka Checks ---
 
 
 class KafkaTopicExistsCheck(BaseCheck):
-    """Check that a Kafka topic exists."""
+    """Check that a Kafka topic exists and is accessible."""
 
     type: Literal["kafka_topic_exists"] = "kafka_topic_exists"
-    kafka_addr_env: str
-    kafka_topic_env: str
-    on_connect: str = ""
-    on_partitions_read: str = ""
+    kafka_addr_env: str = Field(
+        description="Environment variable name containing Kafka address (host:port)"
+    )
+    kafka_topic_env: str = Field(
+        description="Environment variable name containing topic name"
+    )
+    on_connect: str = Field(
+        default="", description="Analytics event when connected to Kafka"
+    )
+    on_partitions_read: str = Field(
+        default="", description="Analytics event when partitions are read"
+    )
 
 
 class KafkaRoundtripCheck(BaseCheck):
-    """Send and receive messages through Kafka."""
+    """Send messages to Kafka and verify they can be received."""
 
     type: Literal["kafka_roundtrip"] = "kafka_roundtrip"
-    kafka_addr_env: str
-    kafka_topic_env: str
-    message_count: int = 1
-    wait_seconds: int = 5
-    message_generator: str = ""
+    kafka_addr_env: str = Field(
+        description="Environment variable name containing Kafka address"
+    )
+    kafka_topic_env: str = Field(
+        description="Environment variable name containing topic name"
+    )
+    message_count: int = Field(default=1, description="Number of test messages to send")
+    wait_seconds: int = Field(
+        default=5, description="Seconds to wait for messages to be received"
+    )
+    message_generator: str = Field(
+        default="", description="Optional custom Go function to generate messages"
+    )
 
 
 class KafkaSendFileCheck(BaseCheck):
-    """Send file contents to Kafka."""
+    """Send contents of a file to a Kafka topic."""
 
     type: Literal["kafka_send_file"] = "kafka_send_file"
-    kafka_addr_env: str
-    kafka_topic_env: str
-    file: str
+    kafka_addr_env: str = Field(
+        description="Environment variable name containing Kafka address"
+    )
+    kafka_topic_env: str = Field(
+        description="Environment variable name containing topic name"
+    )
+    file: str = Field(description="Path to file containing messages to send")
 
 
 # --- Postgres Checks ---
 
 
 class PostgresConnectCheck(BaseCheck):
-    """Check Postgres connection."""
+    """Verify PostgreSQL database connectivity."""
 
     type: Literal["postgres_connect"] = "postgres_connect"
-    postgres_url_env: str
-    on_connect: str = ""
+    postgres_url_env: str = Field(
+        description="Environment variable with PostgreSQL connection URL"
+    )
+    on_connect: str = Field(
+        default="", description="Analytics event when connection succeeds"
+    )
 
 
 class PostgresTablesEmptyCheck(BaseCheck):
-    """Check that Postgres tables are empty."""
+    """Verify that specified PostgreSQL tables have no rows."""
 
     type: Literal["postgres_tables_empty"] = "postgres_tables_empty"
-    postgres_url_env: str
-    tables: list[str] = Field(default_factory=list)
-    message_before: str = ""
-    on_start: str = ""
+    postgres_url_env: str = Field(
+        description="Environment variable with PostgreSQL connection URL"
+    )
+    tables: list[str] = Field(
+        default_factory=list, description="List of table names that should be empty"
+    )
+    message_before: str = Field(
+        default="", description="Message before checking tables"
+    )
+    on_start: str = Field(default="", description="Analytics event when check starts")
 
 
 # --- Custom Check ---
 
 
 class CustomCheck(BaseCheck):
-    """Custom check implemented in Go."""
+    """Custom check implemented as a Go function in custom_code."""
 
     type: Literal["custom"] = "custom"
-    func: str
-    requires: list[str] = Field(default_factory=list)
+    func: str = Field(
+        description="Name of the Go function to call (defined in custom_code)"
+    )
+    requires: list[str] = Field(
+        default_factory=list, description="Environment variables required by this check"
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -332,7 +447,7 @@ class LabConfig(BaseModel):
     usage_header: str = ""
     usage_vars: str = ""
     usage_docker: str = ""  # optional, can contain ${IMAGE}
-    usage_debug: str = ""   # optional, can contain ${DEBUG}
+    usage_debug: str = ""  # optional, can contain ${DEBUG}
     confirm_display: list[ConfirmField | str] = Field(default_factory=list)
 
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
@@ -427,6 +542,9 @@ class LabConfig(BaseModel):
                 result.append(ConfirmField(name=field, masked=False))
             else:
                 result.append(field)
+        else:
+            sources = self.required_env + self.optional_env + self.optional_env_int
+            return [ConfirmField(name=env.name, masked=False) for env in sources]
         return result
 
     def get_filtered_imports(self) -> list[str]:
@@ -439,15 +557,30 @@ class LabConfig(BaseModel):
 
         conditional_imports = {
             "context": [self.has_context],
-            "time": [self.has_kafka_checks, self.has_wait_checks, self.has_http_batch_checks],
-            "strings": [self.has_param_checks, self.has_forbidden_addr_checks, self.has_http_request_checks, self.has_http_batch_checks],
+            "time": [
+                self.has_kafka_checks,
+                self.has_wait_checks,
+                self.has_http_batch_checks,
+            ],
+            "strings": [
+                self.has_param_checks,
+                self.has_forbidden_addr_checks,
+                self.has_http_request_checks,
+                self.has_http_batch_checks,
+            ],
             "encoding/json": [self.has_http_request_checks, self.has_http_batch_checks],
             "io": [self.has_http_request_checks, self.has_http_batch_checks],
-            "net/http": [self.has_http_checks, self.has_http_request_checks, self.has_http_batch_checks],
+            "net/http": [
+                self.has_http_checks,
+                self.has_http_request_checks,
+                self.has_http_batch_checks,
+            ],
             "database/sql": [self.has_postgres_checks],
             "flag": [self.has_flags],
         }
 
-        auto_imports |= {imp for imp, conds in conditional_imports.items() if any(conds)}
+        auto_imports |= {
+            imp for imp, conds in conditional_imports.items() if any(conds)
+        }
 
         return [imp for imp in self.custom_code.imports if imp not in auto_imports]

@@ -96,9 +96,27 @@ var batchResults = make(map[string][]batchRequestData)
 func setupUsage() {
 {% set has_image = config.usage_docker and "${IMAGE}" in config.usage_docker %}
 {% set has_debug = config.usage_debug and "${DEBUG}" in config.usage_debug %}
+{% if not config.usage_header %}
+{% set placeholder_header = "Lab Checker - Configure via environment variables" %}
+{% else %}
+{% set placeholder_header = config.usage_header %}
+{% endif %}
+{% if not config.usage_vars %}
+{% set auto_vars %}
+{% if config.required_env %}Required:
+{% for env in config.required_env %}  {{ env.name | prefixed_env(config.env_prefix) }} - {{ env.error or 'Required variable' }}
+{% endfor %}{% endif %}
+{% if config.optional_env or config.optional_env_int %}Optional:
+{% for env in config.optional_env %}  {{ env.name | prefixed_env(config.env_prefix) }} - default: {{ env.default or 'none' }}
+{% endfor %}{% for env in config.optional_env_int %}  {{ env.name | prefixed_env(config.env_prefix) }} - default: {{ env.default }}
+{% endfor %}{% endif %}{% endset %}
+{% set auto_vars = auto_vars | trim %}
+{% else %}
+{% set auto_vars = config.usage_vars %}
+{% endif %}
 {% if has_image or has_debug %}
-	cli.SetupUsage(fmt.Sprintf(`{{ config.usage_header | replace("${ENV_PREFIX}", config.env_prefix) }}
-{{ config.usage_vars | replace("${ENV_PREFIX}", config.env_prefix) }}
+	cli.SetupUsage(fmt.Sprintf(`{{ placeholder_header | replace("${ENV_PREFIX}", config.env_prefix) }}
+{{ auto_vars | replace("${ENV_PREFIX}", config.env_prefix) | trim }}
 {% if config.usage_docker %}
 {{ config.usage_docker | replace("${ENV_PREFIX}", config.env_prefix) | replace("${IMAGE}", "%s") }}
 {% endif %}
@@ -107,8 +125,8 @@ func setupUsage() {
 {% endif %}
 `{% if has_image %}, os.Getenv("{{ "IMAGE" | prefixed_env(config.env_prefix) }}"){% endif %}{% if has_debug %}, os.Getenv("{{ "DEBUG" | prefixed_env(config.env_prefix) }}"){% endif %}))
 {% else %}
-	cli.SetupUsage(`{{ config.usage_header | replace("${ENV_PREFIX}", config.env_prefix) }}
-{{ config.usage_vars | replace("${ENV_PREFIX}", config.env_prefix) }}
+	cli.SetupUsage(`{{ placeholder_header | replace("${ENV_PREFIX}", config.env_prefix) }}
+{{ auto_vars | replace("${ENV_PREFIX}", config.env_prefix) | trim }}
 {% if config.usage_docker %}
 {{ config.usage_docker | replace("${ENV_PREFIX}", config.env_prefix) }}
 {% endif %}
