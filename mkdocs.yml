@@ -1,0 +1,56 @@
+site_name: Pytrekgen Docs
+site_description: generator for trekker go-based lab checkers
+site_url: https://shrimpsizemoose.github.io/trekker
+repo_url: https://github.com/shrimpsizemoose/trekker
+repo_name: shrimpsizemoose/trekker
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Check Types: check-types.md
+  - Configuration: config-schema.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/shrimpsizemoose/trekker

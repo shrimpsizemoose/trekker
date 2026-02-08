@@ -1,0 +1,58 @@
+name: Generate and Deploy Docs
+
+on:
+  push:
+    branches: [trunk]
+    paths:
+      - 'pytrekgen/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      
+      - name: Install dependencies
+        working-directory: pytrekgen
+        run: uv sync --extra dev
+      
+      - name: Generate documentation from source
+        working-directory: pytrekgen
+        run: uv run python docs_generator.py
+      
+      - name: Build MkDocs site
+        working-directory: pytrekgen
+        run: uv run mkdocs build --config-file ../mkdocs.yml --site-dir ${{ github.workspace }}/_site
+      
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ github.workspace }}/_site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
