@@ -51,6 +51,7 @@ usage_vars: |
   ${ENV_PREFIX}_KAFKA_BATCH_SIZE - по сколько сообщений слать за раз (например, 1000)
   ${ENV_PREFIX}_KAFKA_BATCH_NOM_NOM_DELAY_MS - сколько ждать (в миллисекундах) после отправки пакета
 
+usage_docker: |
   Переменные проще сохранить в файл и оттуда уже давать чекеру
   Например, можно создать файл env.conf и написать туда:
     NPL_LAB02KAFKA_ADDR=kafka.example.com:9092
@@ -61,7 +62,6 @@ usage_vars: |
     NPL_KAFKA_BATCH_SIZE=50
     NPL_KAFKA_BATCH_NOM_NOM_DELAY_MS=300
 
-usage_docker: |
   И потом подсунуть его докеру через --env-file env.conf
     docker run --rm -it --env-file env.conf ${IMAGE}
   Флаг -send-only отправит только сообщения в кафку без проверки постгреса

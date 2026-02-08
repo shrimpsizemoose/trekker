@@ -23,8 +23,9 @@ class Generator:
             lstrip_blocks=True,
             keep_trailing_newline=True,
         )
+        self._register_custom_filters()
 
-        # Register custom filters
+    def _register_custom_filters(self) -> None:
         self.env.filters["quote"] = self._quote
         self.env.filters["title_case"] = self._title_case
         self.env.filters["lower_camel"] = self._lower_camel
@@ -57,6 +58,7 @@ class Generator:
         Example:
             _prefixed_env("TOKEN", "NPL") -> "NPL_TOKEN"
             _prefixed_env("TOKEN", "") -> "TOKEN"
+
         """
         if prefix:
             return f"{prefix}_{name}"
