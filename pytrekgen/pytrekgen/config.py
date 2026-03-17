@@ -538,14 +538,15 @@ class LabConfig(BaseModel):
     def get_confirm_fields(self) -> list[ConfirmField]:
         """Normalize confirm_display to list of ConfirmField."""
         result = []
+        if not self.confirm_display:
+            sources = self.required_env + self.optional_env + self.optional_env_int
+            return [ConfirmField(name=env.name, masked=False) for env in sources]
+
         for field in self.confirm_display:
             if isinstance(field, str):
                 result.append(ConfirmField(name=field, masked=False))
             else:
                 result.append(field)
-        else:
-            sources = self.required_env + self.optional_env + self.optional_env_int
-            return [ConfirmField(name=env.name, masked=False) for env in sources]
         return result
 
     def get_filtered_imports(self) -> list[str]:
