@@ -484,7 +484,7 @@ func main() {
 	})
 {% else %}
 	tracker = analytics.NewAnalytics(analytics.Config{
-		BaseURL: os.Getenv("{{ "MINERVA" | prefixed_env(config.env_prefix) }}"),
+		BaseURL: os.Getenv("{{ config.analytics.url_env | prefixed_env(config.env_prefix) }}"),
 		SkipTLS: {{ "true" if config.analytics.skip_tls else "false" }},
 		CommonData: map[string]string{
 {% for key, env_var in config.analytics.common_data.items() %}

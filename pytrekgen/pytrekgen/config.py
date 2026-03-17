@@ -59,6 +59,7 @@ class ConfirmField(BaseModel):
 class AnalyticsConfig(BaseModel):
     """Analytics configuration."""
 
+    url_env: str = "KANELBULLE"
     skip_tls: bool = False
     offline: bool = False  # print to console instead of sending over wire
     common_data: dict[str, str] = Field(default_factory=dict)
