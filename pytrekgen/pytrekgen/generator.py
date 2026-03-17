@@ -58,9 +58,12 @@ class Generator:
         Example:
             _prefixed_env("TOKEN", "NPL") -> "NPL_TOKEN"
             _prefixed_env("TOKEN", "") -> "TOKEN"
+            _prefixed_env("NPL_TOKEN", "NPL") -> "NPL_TOKEN"
 
         """
         if prefix:
+            if name.startswith(f"{prefix}_"):
+                return name
             return f"{prefix}_{name}"
         return name
 
