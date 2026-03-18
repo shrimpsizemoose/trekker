@@ -72,6 +72,8 @@ var {{ ed.name }}Data []byte
 
 var tracker analytics.Tracker
 var flagPing *bool
+var flagVersion *bool
+var flagChecks *bool
 {% if config.has_flags %}
 {% for flag in config.flags %}
 var flag{{ flag.name | title_case }} *{{ flag.type }}
@@ -452,6 +454,8 @@ func main() {
 	defer rootCancel()
 {% endif %}
 	flagPing = flag.Bool("ping", false, "Проверить соединение с сервером аналитики и выйти")
+	flagVersion = flag.Bool("version", false, "Показать версию и выйти")
+	flagChecks = flag.Bool("checks", false, "Показать список проверок и выйти")
 {% if config.has_flags %}
 {% for flag in config.flags %}
 {% if flag.type == "bool" %}
@@ -466,6 +470,23 @@ func main() {
 
 	setupUsage()
 	flag.Parse()
+
+	if *flagVersion {
+		fmt.Println("Lab {{ lab.id }}: {{ lab.name }}")
+		return
+	}
+
+	if *flagChecks {
+		fmt.Println("Проверки для Lab {{ lab.id }} ({{ lab.name }}):")
+{% for check in config.checks %}
+{% if check.name %}
+		fmt.Println("  {{ loop.index }}. [{{ check.type }}] {{ check.name }}")
+{% else %}
+		fmt.Println("  {{ loop.index }}. [{{ check.type }}]")
+{% endif %}
+{% endfor %}
+		return
+	}
 
 	env.LoadEnv()
 
