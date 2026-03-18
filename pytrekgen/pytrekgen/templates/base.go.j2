@@ -468,6 +468,25 @@ func main() {
 	flag.Parse()
 
 	env.LoadEnv()
+
+	if *flagPing {
+{% if config.analytics.offline %}
+		pingTracker := analytics.NewOfflineAnalytics(analytics.Config{})
+{% else %}
+		pingTracker := analytics.NewAnalytics(analytics.Config{
+			BaseURL: os.Getenv("{{ config.analytics.url_env | prefixed_env(config.env_prefix) }}"),
+{% if config.analytics.health_url_env %}
+			HealthURL: os.Getenv("{{ config.analytics.health_url_env | prefixed_env(config.env_prefix) }}"),
+{% endif %}
+			SkipTLS: {{ "true" if config.analytics.skip_tls else "false" }},
+		})
+{% endif %}
+		if err := pingTracker.CheckConnection(); err != nil {
+			logger.Error.Fatalf("--ping: %v", err)
+		}
+		return
+	}
+
 	env.RequireEnv(map[string]string{
 {% for ev in config.required_env %}
 		"{{ ev.name | prefixed_env(config.env_prefix) }}": "{{ ev.error }}",
@@ -511,13 +530,6 @@ func main() {
 		},
 	})
 {% endif %}
-
-	if *flagPing {
-		if err := tracker.CheckConnection(); err != nil {
-			logger.Error.Fatalf("--ping: %v", err)
-		}
-		return
-	}
 
 	// LET'S GOOOOOOO
 	tracker.PingStart()
