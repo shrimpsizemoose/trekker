@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/shrimpsizemoose/trekker/logger"
@@ -83,18 +84,27 @@ func (a *Analytics) sendEvent(eventType string, additionalData map[string]string
 	var respBody string
 	if a.verbose {
 		body, _ := io.ReadAll(resp.Body)
-		respBody = string(body)
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(body, &parsed); err == nil {
+			var parts []string
+			for k, v := range parsed {
+				parts = append(parts, fmt.Sprintf("%s: %v", k, v))
+			}
+			respBody = strings.Join(parts, ", ")
+		} else {
+			respBody = string(body)
+		}
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if a.verbose {
-			logger.Error.Printf("Ответ сервера: %s", respBody)
+			logger.Error.Printf("Ответ сервера:\n  %s", respBody)
 		}
 		return fmt.Errorf("Неправильное сочетание студента-токена, перепроверь что всё вводишь правильно. Ожидал статус 200 OK, получил - %s", resp.Status)
 	}
 	if resp.StatusCode != http.StatusOK {
 		if a.verbose {
-			logger.Error.Printf("Ответ сервера: %s", respBody)
+			logger.Error.Printf("Ответ сервера:\n  %s", respBody)
 		}
 		return fmt.Errorf("Ой. Я пытался тебя посчитать, но не смог убедиться что всё ок (получил статус %s).\n\n1. Сначала попробуй запустить чекер с флагом --ping чтобы проверить соединение с сервером аналитики\n2. Если --ping не проходит, проверь что у тебя есть доступ в интернет и что VPN/firewall не блокирует соединение\n3. Если --ping прошёл, а чекер всё равно падает -- напиши координатору и приложи скриншот", resp.Status)
 	}
