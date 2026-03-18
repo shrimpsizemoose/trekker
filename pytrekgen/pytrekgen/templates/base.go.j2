@@ -478,7 +478,11 @@ func main() {
 	flag.Parse()
 
 	if *flagVersion {
-		fmt.Printf("Lab {{ lab.id }}: {{ lab.name }} (%s, %s)\n", gitTag, gitSHA)
+		sha := gitSHA
+		if len(sha) > 8 {
+			sha = sha[:8]
+		}
+		fmt.Printf("Lab {{ lab.id }}: {{ lab.name }}\n  %s (%s)\n", gitTag, sha)
 		return
 	}
 

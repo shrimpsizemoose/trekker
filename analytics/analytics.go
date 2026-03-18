@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
@@ -79,15 +80,21 @@ func (a *Analytics) sendEvent(eventType string, additionalData map[string]string
 	}
 	defer resp.Body.Close()
 
+	var respBody string
+	if a.verbose {
+		body, _ := io.ReadAll(resp.Body)
+		respBody = string(body)
+	}
+
 	if resp.StatusCode == http.StatusUnauthorized {
 		if a.verbose {
-			logger.Error.Println(resp)
+			logger.Error.Printf("Ответ сервера: %s", respBody)
 		}
 		return fmt.Errorf("Неправильное сочетание студента-токена, перепроверь что всё вводишь правильно. Ожидал статус 200 OK, получил - %s", resp.Status)
 	}
 	if resp.StatusCode != http.StatusOK {
 		if a.verbose {
-			logger.Error.Println(resp)
+			logger.Error.Printf("Ответ сервера: %s", respBody)
 		}
 		return fmt.Errorf("Ой. Я пытался тебя посчитать, но не смог убедиться что всё ок (получил статус %s).\n\n1. Сначала попробуй запустить чекер с флагом --ping чтобы проверить соединение с сервером аналитики\n2. Если --ping не проходит, проверь что у тебя есть доступ в интернет и что VPN/firewall не блокирует соединение\n3. Если --ping прошёл, а чекер всё равно падает -- напиши координатору и приложи скриншот", resp.Status)
 	}
@@ -133,7 +140,7 @@ func (a *Analytics) CheckConnection() error {
 	}
 	defer resp.Body.Close()
 
-	logger.Victory.Printf("Соединение с аналитикой установлено (%s, статус: %s)", url, resp.Status)
+	logger.Victory.Printf("Соединение с аналитикой установлено\n  %s (статус: %s)", url, resp.Status)
 	return nil
 }
 
