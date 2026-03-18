@@ -21,9 +21,7 @@ import (
 	"encoding/json"
 	"io"
 {% endif %}
-{% if config.has_flags %}
 	"flag"
-{% endif %}
 	"fmt"
 {% if config.has_http_checks %}
 	"crypto/rand"
@@ -73,6 +71,7 @@ var {{ ed.name }}Data []byte
 {% endif %}
 
 var tracker analytics.Tracker
+var flagPing *bool
 {% if config.has_flags %}
 {% for flag in config.flags %}
 var flag{{ flag.name | title_case }} *{{ flag.type }}
@@ -146,6 +145,13 @@ func confirmSettings() bool {
 {% for field in confirm_fields %}
 {% if field.masked %}
 		utils.MaskToken(os.Getenv("{{ field.name | prefixed_env(config.env_prefix) }}")),
+{% elif field.default %}
+		func() string {
+			if v := os.Getenv("{{ field.name | prefixed_env(config.env_prefix) }}"); v != "" {
+				return v
+			}
+			return "{{ field.default }} (default)"
+		}(),
 {% else %}
 		os.Getenv("{{ field.name | prefixed_env(config.env_prefix) }}"),
 {% endif %}
@@ -445,8 +451,8 @@ func main() {
 	rootCtx, rootCancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer rootCancel()
 {% endif %}
+	flagPing = flag.Bool("ping", false, "Проверить соединение с сервером аналитики и выйти")
 {% if config.has_flags %}
-	// Parse command line flags
 {% for flag in config.flags %}
 {% if flag.type == "bool" %}
 	flag{{ flag.name | title_case }} = flag.Bool("{{ flag.name }}", {{ flag.default }}, "{{ flag.description }}")
@@ -459,9 +465,7 @@ func main() {
 {% endif %}
 
 	setupUsage()
-{% if config.has_flags %}
 	flag.Parse()
-{% endif %}
 
 	env.LoadEnv()
 	env.RequireEnv(map[string]string{
@@ -485,6 +489,9 @@ func main() {
 {% else %}
 	tracker = analytics.NewAnalytics(analytics.Config{
 		BaseURL: os.Getenv("{{ config.analytics.url_env | prefixed_env(config.env_prefix) }}"),
+{% if config.analytics.health_url_env %}
+		HealthURL: os.Getenv("{{ config.analytics.health_url_env | prefixed_env(config.env_prefix) }}"),
+{% endif %}
 		SkipTLS: {{ "true" if config.analytics.skip_tls else "false" }},
 		CommonData: map[string]string{
 {% for key, env_var in config.analytics.common_data.items() %}
@@ -504,6 +511,13 @@ func main() {
 		},
 	})
 {% endif %}
+
+	if *flagPing {
+		if err := tracker.CheckConnection(); err != nil {
+			logger.Error.Fatalf("--ping: %v", err)
+		}
+		return
+	}
 
 	// LET'S GOOOOOOO
 	tracker.PingStart()

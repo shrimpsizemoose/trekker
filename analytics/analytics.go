@@ -16,10 +16,12 @@ type Tracker interface {
 	Ping(eventType string, additionalData map[string]string)
 	PingStart()
 	PingFinish()
+	CheckConnection() error
 }
 
 type Config struct {
 	BaseURL       string
+	HealthURL     string
 	SkipTLS       bool
 	CommonData    map[string]string
 	SecretHeaders map[string]string
@@ -73,7 +75,7 @@ func (a *Analytics) sendEvent(eventType string, additionalData map[string]string
 		if a.verbose {
 			logger.Error.Println(err)
 		}
-		return fmt.Errorf("Что-то не так с аналитикой: я не смог тебя посчитать. Надо проверить сеть, а если не поможет -- напиши координатору пжлст и приложи скриншот. Спасибо 🐳.")
+		return fmt.Errorf("Что-то не так с аналитикой: я не смог тебя посчитать.\n\n1. Сначала попробуй запустить чекер с флагом --ping чтобы проверить соединение с сервером аналитики\n2. Если --ping не проходит, проверь что у тебя есть доступ в интернет и что VPN/firewall не блокирует соединение\n3. Если --ping прошёл, а чекер всё равно падает -- напиши координатору и приложи скриншот")
 	}
 	defer resp.Body.Close()
 
@@ -87,7 +89,7 @@ func (a *Analytics) sendEvent(eventType string, additionalData map[string]string
 		if a.verbose {
 			logger.Error.Println(resp)
 		}
-		return fmt.Errorf("Ой. Я пытался тебя посчитать, но не смог убедиться что всё ок. Надо проверить сеть, а если не поможет -- напиши координатору пжлст и приложи скриншот. Я ожидал статус 200 OK, получил - %s", resp.Status)
+		return fmt.Errorf("Ой. Я пытался тебя посчитать, но не смог убедиться что всё ок (получил статус %s).\n\n1. Сначала попробуй запустить чекер с флагом --ping чтобы проверить соединение с сервером аналитики\n2. Если --ping не проходит, проверь что у тебя есть доступ в интернет и что VPN/firewall не блокирует соединение\n3. Если --ping прошёл, а чекер всё равно падает -- напиши координатору и приложи скриншот", resp.Status)
 	}
 
 	return nil
@@ -104,6 +106,35 @@ func (a *Analytics) Ping(eventType string, additionalData map[string]string) {
 		}
 		logger.Error.Fatalf("Failed to send analytics: %v", err)
 	}
+}
+
+func (a *Analytics) CheckConnection() error {
+	url := a.config.HealthURL
+	if url == "" {
+		url = a.config.BaseURL
+	}
+	if url == "" {
+		return fmt.Errorf("адрес аналитики не задан (переменная окружения пустая или не указана)")
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: a.config.SkipTLS},
+	}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: transport}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("не удалось создать запрос к %s: %w", url, err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("не удалось подключиться к %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	logger.Victory.Printf("Соединение с аналитикой установлено (%s, статус: %s)", url, resp.Status)
+	return nil
 }
 
 func (a *Analytics) PingStart() {
@@ -147,6 +178,11 @@ func (o *OfflineAnalytics) Ping(eventType string, additionalData map[string]stri
 	}
 
 	logger.Info.Printf("(offline analytics) %s %s", eventType, pairs)
+}
+
+func (o *OfflineAnalytics) CheckConnection() error {
+	logger.Victory.Println("(offline analytics) --ping: соединение не требуется в offline режиме")
+	return nil
 }
 
 func (o *OfflineAnalytics) PingStart() {

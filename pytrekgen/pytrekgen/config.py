@@ -54,12 +54,14 @@ class ConfirmField(BaseModel):
 
     name: str
     masked: bool = False
+    default: str = ""
 
 
 class AnalyticsConfig(BaseModel):
     """Analytics configuration."""
 
     url_env: str = "KANELBULLE"
+    health_url_env: str = ""
     skip_tls: bool = False
     offline: bool = False  # print to console instead of sending over wire
     common_data: dict[str, str] = Field(default_factory=dict)
@@ -537,15 +539,38 @@ class LabConfig(BaseModel):
 
     def get_confirm_fields(self) -> list[ConfirmField]:
         """Normalize confirm_display to list of ConfirmField."""
-        result = []
+        # Build lookup of optional env defaults
+        opt_defaults: dict[str, str] = {}
+        for env in self.optional_env:
+            if env.default:
+                opt_defaults[env.name] = env.default
+        for env in self.optional_env_int:
+            opt_defaults[env.name] = str(env.default)
+
         if not self.confirm_display:
             sources = self.required_env + self.optional_env + self.optional_env_int
-            return [ConfirmField(name=env.name, masked=False) for env in sources]
+            return [
+                ConfirmField(
+                    name=env.name,
+                    masked=False,
+                    default=opt_defaults.get(env.name, ""),
+                )
+                for env in sources
+            ]
 
+        result = []
         for field in self.confirm_display:
             if isinstance(field, str):
-                result.append(ConfirmField(name=field, masked=False))
+                result.append(ConfirmField(
+                    name=field,
+                    masked=False,
+                    default=opt_defaults.get(field, ""),
+                ))
             else:
+                if not field.default and field.name in opt_defaults:
+                    field = field.model_copy(
+                        update={"default": opt_defaults[field.name]}
+                    )
                 result.append(field)
         return result
 
@@ -555,7 +580,7 @@ class LabConfig(BaseModel):
         Returns custom_code.imports minus any imports that are automatically
         added based on check types (to avoid duplicates).
         """
-        auto_imports = {"fmt", "os"}
+        auto_imports = {"fmt", "os", "flag"}
 
         conditional_imports = {
             "context": [self.has_context],
@@ -578,7 +603,6 @@ class LabConfig(BaseModel):
                 self.has_http_batch_checks,
             ],
             "database/sql": [self.has_postgres_checks],
-            "flag": [self.has_flags],
         }
 
         auto_imports |= {
