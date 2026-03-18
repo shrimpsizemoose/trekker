@@ -70,10 +70,16 @@ var {{ ed.name }}Data []byte
 {% endfor %}
 {% endif %}
 
-var tracker analytics.Tracker
-var flagPing *bool
-var flagVersion *bool
-var flagChecks *bool
+var (
+	tracker     analytics.Tracker
+	flagPing    *bool
+	flagVersion *bool
+	flagChecks  *bool
+
+	// Set via -ldflags at build time
+	gitTag = "dev"
+	gitSHA = "unknown"
+)
 {% if config.has_flags %}
 {% for flag in config.flags %}
 var flag{{ flag.name | title_case }} *{{ flag.type }}
@@ -472,7 +478,7 @@ func main() {
 	flag.Parse()
 
 	if *flagVersion {
-		fmt.Println("Lab {{ lab.id }}: {{ lab.name }}")
+		fmt.Printf("Lab {{ lab.id }}: {{ lab.name }} (%s, %s)\n", gitTag, gitSHA)
 		return
 	}
 
