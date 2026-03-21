@@ -150,6 +150,11 @@ func (a *Analytics) CheckConnection() error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 400 {
+		logger.Error.Printf("Сервер аналитики ответил с ошибкой\n  %s (статус: %s)", url, resp.Status)
+		return fmt.Errorf("--ping не прошёл")
+	}
+
 	logger.Victory.Printf("Соединение с аналитикой установлено\n  %s (статус: %s)", url, resp.Status)
 	return nil
 }
