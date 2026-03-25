@@ -19,6 +19,8 @@ import (
 {% endif %}
 {% if config.has_http_request_checks or config.has_http_batch_checks %}
 	"encoding/json"
+{% endif %}
+{% if config.has_http_request_checks or config.has_http_batch_checks or config.has_clickhouse_simple_checks %}
 	"io"
 {% endif %}
 	"flag"
@@ -27,11 +29,14 @@ import (
 	"crypto/rand"
 	"math/big"
 {% endif %}
-{% if config.has_http_checks or config.has_http_request_checks or config.has_http_batch_checks %}
+{% if config.has_http_checks or config.has_http_request_checks or config.has_http_batch_checks or config.has_clickhouse_simple_checks %}
 	"net/http"
 {% endif %}
+{% if config.has_clickhouse_simple_checks %}
+	"net/url"
+{% endif %}
 	"os"
-{% if config.has_param_checks or config.has_forbidden_addr_checks or config.has_http_request_checks or config.has_http_batch_checks %}
+{% if config.has_param_checks or config.has_forbidden_addr_checks or config.has_http_request_checks or config.has_http_batch_checks or config.has_clickhouse_simple_checks %}
 	"strings"
 {% endif %}
 {% if config.has_kafka_checks or config.has_wait_checks or config.has_http_batch_checks %}
@@ -240,6 +245,44 @@ func checkForbiddenAddress(envVar string, forbidden []string, failEvent, failMsg
 		}
 	}
 	return nil
+}
+{% endif %}
+{% if config.has_clickhouse_simple_checks %}
+
+func clickhouseQuerySimple(addr, user, pass, query string) (string, int, error) {
+	params := url.Values{}
+	params.Add("query", query)
+	if user != "" {
+		params.Add("user", user)
+	}
+	if pass != "" {
+		params.Add("password", pass)
+	}
+
+	clickURL := fmt.Sprintf("http://%s/?%s", addr, params.Encode())
+	resp, err := http.Get(clickURL)
+	if err != nil {
+		return "", 0, fmt.Errorf("connection failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", 0, fmt.Errorf("ClickHouse returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	result := strings.TrimSpace(string(body))
+	lines := 0
+	if result != "" {
+		lines = len(strings.Split(result, "\n"))
+	}
+
+	return result, lines, nil
 }
 {% endif %}
 {% if config.has_kafka_checks %}
@@ -835,6 +878,88 @@ func main() {
 {% if check.on_success.event %}
 		tracker.Ping("{{ check.on_success.event }}", nil)
 {% endif %}
+	}
+{% elif check.type == "clickhouse_query_simple" %}
+	{
+		// clickhouse_query_simple: {{ check.name }}
+{% if check.message_before %}
+		logger.Info.Println("{{ check.message_before }}")
+{% endif %}
+{% if check.on_request %}
+		tracker.Ping("{{ check.on_request }}", nil)
+{% endif %}
+{% set query_vars = check.query | extract_vars %}
+{% if query_vars %}
+		chResult, chLines, chErr := clickhouseQuerySimple(
+			os.Getenv("{{ check.clickhouse_addr_env | prefixed_env(config.env_prefix) }}"),
+{% if check.clickhouse_user_env %}
+			os.Getenv("{{ check.clickhouse_user_env | prefixed_env(config.env_prefix) }}"),
+{% else %}
+			"",
+{% endif %}
+{% if check.clickhouse_pass_env %}
+			os.Getenv("{{ check.clickhouse_pass_env | prefixed_env(config.env_prefix) }}"),
+{% else %}
+			"",
+{% endif %}
+			fmt.Sprintf("{{ check.query | url_to_format }}", {% for v in query_vars %}os.Getenv("{{ v | prefixed_env(config.env_prefix) }}"), {% endfor %}),
+		)
+{% else %}
+		chResult, chLines, chErr := clickhouseQuerySimple(
+			os.Getenv("{{ check.clickhouse_addr_env | prefixed_env(config.env_prefix) }}"),
+{% if check.clickhouse_user_env %}
+			os.Getenv("{{ check.clickhouse_user_env | prefixed_env(config.env_prefix) }}"),
+{% else %}
+			"",
+{% endif %}
+{% if check.clickhouse_pass_env %}
+			os.Getenv("{{ check.clickhouse_pass_env | prefixed_env(config.env_prefix) }}"),
+{% else %}
+			"",
+{% endif %}
+			"{{ check.query }}",
+		)
+{% endif %}
+{% if check.on_response %}
+		tracker.Ping("{{ check.on_response }}", nil)
+{% endif %}
+		if chErr != nil {
+			logger.Error.Println(chErr)
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+			logger.Error.Fatalf("{{ check.on_failure.message }}")
+{% else %}
+			logger.Error.Fatal("ClickHouse query failed")
+{% endif %}
+		}
+{% if check.expected %}
+		if chResult != "{{ check.expected }}" {
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+			logger.Error.Fatalf("{{ check.on_failure.message }}: expected '{{ check.expected }}', got '%s'", chResult)
+{% else %}
+			logger.Error.Fatalf("expected '{{ check.expected }}', got '%s'", chResult)
+{% endif %}
+		}
+{% endif %}
+{% if check.expected_rows >= 0 %}
+		if chLines != {{ check.expected_rows }} {
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+			logger.Error.Fatalf("{{ check.on_failure.message }}: expected {{ check.expected_rows }} rows, got %d", chLines)
+{% else %}
+			logger.Error.Fatalf("expected {{ check.expected_rows }} rows, got %d", chLines)
+{% endif %}
+		}
+{% endif %}
+{% if check.message_success %}
+		logger.Info.Println("{{ check.message_success }}")
+{% endif %}
+{% if check.on_success.event %}
+		tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
+		_ = chResult
+		_ = chLines
 	}
 {% elif check.type == "custom" %}
 	if err := {{ check.func }}(rootCtx); err != nil {

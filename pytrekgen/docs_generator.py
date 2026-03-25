@@ -8,6 +8,7 @@ from typing import get_args, get_origin
 
 from pytrekgen.config import (
     Check,
+    ClickhouseQuerySimpleCheck,
     CustomCheck,
     ForbiddenAddressCheck,
     HTTPBatchCheck,
@@ -40,6 +41,7 @@ CHECK_TYPES = [
     KafkaSendFileCheck,
     PostgresConnectCheck,
     PostgresTablesEmptyCheck,
+    ClickhouseQuerySimpleCheck,
     CustomCheck,
 ]
 

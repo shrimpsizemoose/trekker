@@ -1,0 +1,53 @@
+lab:
+  id: "test"
+  name: "ClickHouse Test"
+  env_prefix: "NPL"
+
+build:
+  module: github.com/test/checker
+  go_version: "1.23"
+
+required_env:
+  - name: STUDENT
+    error: "Need student name"
+  - name: TOKEN
+    error: "Need token"
+
+checks:
+  - type: clickhouse_query_simple
+    name: clickhouse_connectivity
+    clickhouse_addr_env: CLICKHOUSE_ADDR
+    query: "SELECT 1"
+    expected: "1"
+    message_before: "Checking ClickHouse connectivity"
+    message_success: "ClickHouse is alive"
+    on_request: "020_ch_query_sent"
+    on_response: "021_ch_query_received"
+    on_success:
+      event: "022_ch_connect_ok"
+    on_failure:
+      event: "022_ch_connect_failed"
+      message: "Cannot connect to ClickHouse"
+
+  - type: clickhouse_query_simple
+    name: clickhouse_table_check
+    clickhouse_addr_env: CLICKHOUSE_ADDR
+    clickhouse_user_env: CLICKHOUSE_USER
+    clickhouse_pass_env: CLICKHOUSE_PASSWORD
+    query: "SELECT count(*) FROM ${CLICKHOUSE_SCHEMA}.${CLICKHOUSE_TABLE} WHERE timestamp=1419714194423"
+    expected: "1"
+    message_before: "Checking data"
+    message_success: "Data looks good"
+    on_failure:
+      event: "023_ch_data_failed"
+      message: "Query returned unexpected result"
+
+  - type: clickhouse_query_simple
+    name: clickhouse_rows_check
+    clickhouse_addr_env: CLICKHOUSE_ADDR
+    query: "DESCRIBE ${CLICKHOUSE_SCHEMA}.${CLICKHOUSE_TABLE}"
+    expected_rows: 4
+    message_before: "Checking table schema"
+    message_success: "Schema looks correct"
+
+success_message: "All checks passed!"

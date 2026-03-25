@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # -----------------------------------------------------------------------------
 # Common / Shared Models
@@ -396,6 +396,51 @@ class PostgresTablesEmptyCheck(BaseCheck):
 # --- Custom Check ---
 
 
+class ClickhouseQuerySimpleCheck(BaseCheck):
+    """Run a single ClickHouse query via HTTP and validate the response."""
+
+    type: Literal["clickhouse_query_simple"] = "clickhouse_query_simple"
+    clickhouse_addr_env: str = Field(
+        description="Environment variable name containing ClickHouse host:port"
+    )
+    clickhouse_user_env: str = Field(
+        default="", description="Environment variable name for ClickHouse user (optional)"
+    )
+    clickhouse_pass_env: str = Field(
+        default="",
+        description="Environment variable name for ClickHouse password (optional)",
+    )
+    query: str = Field(description="ClickHouse SQL query, supports ${VAR} substitution")
+    expected: str = Field(
+        default="",
+        description="Expected exact value of trimmed response (mutually exclusive with expected_rows)",
+    )
+    expected_rows: int = Field(
+        default=-1,
+        description="Expected number of non-empty lines in response (-1 means not set, mutually exclusive with expected)",
+    )
+    message_before: str = Field(
+        default="", description="Message to display before running the query"
+    )
+    message_success: str = Field(
+        default="", description="Message to display on success"
+    )
+    on_request: str = Field(
+        default="", description="Analytics event to emit when query is sent"
+    )
+    on_response: str = Field(
+        default="", description="Analytics event to emit when response is received"
+    )
+
+    @model_validator(mode="after")
+    def check_expected_xor_rows(self) -> "ClickhouseQuerySimpleCheck":
+        has_expected = bool(self.expected)
+        has_rows = self.expected_rows >= 0
+        if has_expected == has_rows:
+            raise ValueError("exactly one of 'expected' or 'expected_rows' must be set")
+        return self
+
+
 class CustomCheck(BaseCheck):
     """Custom check implemented as a Go function in custom_code."""
 
@@ -426,6 +471,7 @@ Check = Annotated[
     | KafkaSendFileCheck
     | PostgresConnectCheck
     | PostgresTablesEmptyCheck
+    | ClickhouseQuerySimpleCheck
     | CustomCheck,
     Field(discriminator="type"),
 ]
@@ -501,6 +547,10 @@ class LabConfig(BaseModel):
         return any(
             c.type in ("postgres_connect", "postgres_tables_empty") for c in self.checks
         )
+
+    @property
+    def has_clickhouse_simple_checks(self) -> bool:
+        return any(c.type == "clickhouse_query_simple" for c in self.checks)
 
     @property
     def has_custom_checks(self) -> bool:
@@ -594,13 +644,16 @@ class LabConfig(BaseModel):
                 self.has_forbidden_addr_checks,
                 self.has_http_request_checks,
                 self.has_http_batch_checks,
+                self.has_clickhouse_simple_checks,
             ],
             "encoding/json": [self.has_http_request_checks, self.has_http_batch_checks],
-            "io": [self.has_http_request_checks, self.has_http_batch_checks],
+            "io": [self.has_http_request_checks, self.has_http_batch_checks, self.has_clickhouse_simple_checks],
+            "net/url": [self.has_clickhouse_simple_checks],
             "net/http": [
                 self.has_http_checks,
                 self.has_http_request_checks,
                 self.has_http_batch_checks,
+                self.has_clickhouse_simple_checks,
             ],
             "database/sql": [self.has_postgres_checks],
         }
