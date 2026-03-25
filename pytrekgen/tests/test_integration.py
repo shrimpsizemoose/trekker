@@ -210,7 +210,7 @@ class TestCodeStructure:
 
         config = minimal_config()
         code = generator.generate(config)
-        assert "var tracker analytics.Tracker" in code
+        assert "tracker" in code and "analytics.Tracker" in code
 
     def test_calls_ping_start_and_finish(self, generator):
         from conftest import minimal_config

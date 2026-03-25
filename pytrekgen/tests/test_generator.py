@@ -275,11 +275,12 @@ class TestConditionalImports:
         assert "rootCtx" in code
         assert "signal.NotifyContext" in code
 
-    def test_no_flag_import_without_flags(self, generator):
+    def test_has_flag_import_always(self, generator):
         config = minimal_config(flags=[])
         code = generator.generate(config)
-        # Should not have flag package or flag.Parse()
-        assert "flag.Parse()" not in code
+        # flag is always imported for built-in --ping/--version/--checks flags
+        assert '"flag"' in code
+        assert "flag.Parse()" in code
 
     def test_has_flag_import_with_flags(self, generator):
         config = minimal_config(flags=[{"name": "debug", "type": "bool"}])

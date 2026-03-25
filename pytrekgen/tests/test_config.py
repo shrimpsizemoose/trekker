@@ -556,11 +556,11 @@ class TestGetFilteredImports:
         filtered = config.get_filtered_imports()
         assert "flag" not in filtered
 
-    def test_keeps_flag_without_flags(self):
+    def test_filters_out_flag_always(self):
         config = minimal_config(flags=[])
         config.custom_code.imports = ["flag"]
         filtered = config.get_filtered_imports()
-        assert "flag" in filtered
+        assert "flag" not in filtered
 
     def test_empty_imports_returns_empty(self):
         config = minimal_config()
