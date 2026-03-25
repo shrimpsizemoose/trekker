@@ -4,44 +4,12 @@
 package main
 
 import (
-{% if config.has_kafka_send_file_checks %}
-	"bufio"
-{% endif %}
 {% if config.has_http_batch_checks %}
 	_ "embed"
 {% endif %}
-{% if config.has_context %}
-	"context"
-	"os/signal"
-{% endif %}
-{% if config.has_postgres_checks %}
-	"database/sql"
-{% endif %}
-{% if config.has_http_request_checks or config.has_http_batch_checks %}
-	"encoding/json"
-{% endif %}
-{% if config.has_http_request_checks or config.has_http_batch_checks or config.has_clickhouse_simple_checks %}
-	"io"
-{% endif %}
-	"flag"
-	"fmt"
-{% if config.has_http_checks %}
-	"crypto/rand"
-	"math/big"
-{% endif %}
-{% if config.has_http_checks or config.has_http_request_checks or config.has_http_batch_checks or config.has_clickhouse_simple_checks %}
-	"net/http"
-{% endif %}
-{% if config.has_clickhouse_simple_checks %}
-	"net/url"
-{% endif %}
-	"os"
-{% if config.has_param_checks or config.has_forbidden_addr_checks or config.has_http_request_checks or config.has_http_batch_checks or config.has_clickhouse_simple_checks %}
-	"strings"
-{% endif %}
-{% if config.has_kafka_checks or config.has_wait_checks or config.has_http_batch_checks %}
-	"time"
-{% endif %}
+{% for imp in config.required_stdlib_imports | sort %}
+	"{{ imp }}"
+{% endfor %}
 {% if config.has_postgres_checks %}
 	_ "github.com/lib/pq"
 {% endif %}

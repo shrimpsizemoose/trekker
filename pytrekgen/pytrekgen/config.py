@@ -5,6 +5,32 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, model_validator
 
 # -----------------------------------------------------------------------------
+# Import Registry
+# -----------------------------------------------------------------------------
+
+# Always included in generated Go code
+BASE_IMPORTS: set[str] = {"fmt", "os", "flag"}
+
+# Each check type declares which Go stdlib imports it needs.
+CHECK_TYPE_STDLIB_IMPORTS: dict[str, set[str]] = {
+    "param_equals": {"strings"},
+    "forbidden_address": {"strings"},
+    "wait": {"time"},
+    "http_get": {"context", "os/signal", "net/http", "crypto/rand", "math/big"},
+    "http_get_random_path": {"context", "os/signal", "net/http", "crypto/rand", "math/big"},
+    "http_request": {"context", "os/signal", "net/http", "strings", "encoding/json", "io"},
+    "http_batch": {"context", "os/signal", "net/http", "strings", "encoding/json", "io", "time"},
+    "http_batch_repeat": {"context", "os/signal", "net/http", "strings", "encoding/json", "io", "time"},
+    "kafka_topic_exists": {"context", "os/signal", "time"},
+    "kafka_roundtrip": {"context", "os/signal", "time"},
+    "kafka_send_file": {"context", "os/signal", "bufio", "time"},
+    "postgres_connect": {"context", "os/signal", "database/sql"},
+    "postgres_tables_empty": {"context", "os/signal", "database/sql"},
+    "custom": {"context", "os/signal"},
+    "clickhouse_query_simple": {"net/http", "net/url", "io", "strings"},
+}
+
+# -----------------------------------------------------------------------------
 # Common / Shared Models
 # -----------------------------------------------------------------------------
 
@@ -624,42 +650,14 @@ class LabConfig(BaseModel):
                 result.append(field)
         return result
 
+    @property
+    def required_stdlib_imports(self) -> set[str]:
+        """Compute all required Go stdlib imports from check types."""
+        result = set(BASE_IMPORTS)
+        for check in self.checks:
+            result |= CHECK_TYPE_STDLIB_IMPORTS.get(check.type, set())
+        return result
+
     def get_filtered_imports(self) -> list[str]:
-        """Get custom imports filtered to exclude auto-generated ones.
-
-        Returns custom_code.imports minus any imports that are automatically
-        added based on check types (to avoid duplicates).
-        """
-        auto_imports = {"fmt", "os", "flag"}
-
-        conditional_imports = {
-            "context": [self.has_context],
-            "time": [
-                self.has_kafka_checks,
-                self.has_wait_checks,
-                self.has_http_batch_checks,
-            ],
-            "strings": [
-                self.has_param_checks,
-                self.has_forbidden_addr_checks,
-                self.has_http_request_checks,
-                self.has_http_batch_checks,
-                self.has_clickhouse_simple_checks,
-            ],
-            "encoding/json": [self.has_http_request_checks, self.has_http_batch_checks],
-            "io": [self.has_http_request_checks, self.has_http_batch_checks, self.has_clickhouse_simple_checks],
-            "net/url": [self.has_clickhouse_simple_checks],
-            "net/http": [
-                self.has_http_checks,
-                self.has_http_request_checks,
-                self.has_http_batch_checks,
-                self.has_clickhouse_simple_checks,
-            ],
-            "database/sql": [self.has_postgres_checks],
-        }
-
-        auto_imports |= {
-            imp for imp, conds in conditional_imports.items() if any(conds)
-        }
-
-        return [imp for imp in self.custom_code.imports if imp not in auto_imports]
+        """Custom imports minus auto-generated ones."""
+        return [imp for imp in self.custom_code.imports if imp not in self.required_stdlib_imports]
