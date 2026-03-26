@@ -25,7 +25,7 @@
   .card li code { background: var(--sidebar-bg); padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.85rem; }
   .mermaid-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; overflow-x: auto; }
   .mermaid-wrap .nodeLabel { text-align: left; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.9rem; }
   th { text-align: left; padding: 0.6rem 0.75rem; border-bottom: 2px solid var(--border); font-weight: 600; white-space: nowrap; }
   td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
   tr:hover td { background: var(--sidebar-bg); }
@@ -35,7 +35,7 @@
   .tag-skip { background: #fff3cd; color: #664d03; }
   .event { font-family: monospace; font-size: 0.82rem; }
   .event-row td { border-bottom: 2px solid var(--border); padding-top: 0; }
-  .event-row + tr td, tr:has(+ .event-row) td { border-bottom: none; }
+  .has-events td { border-bottom: none; }
   .event-cell { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   @media (max-width: 900px) {
     .layout { flex-direction: column; }
@@ -68,33 +68,35 @@
         <thead>
           <tr>
             <th>#</th>
-            <th>Type</th>
             <th>Name</th>
+            <th>Type</th>
             <th>Details</th>
           </tr>
         </thead>
         <tbody>
           {%- for check in config.checks %}
-          <tr id="check-{{ loop.index }}">
+          {%- set has_events = (check.on_success and check.on_success.event) or (check.on_failure and check.on_failure.event) or check.skip_on_flag %}
+          <tr id="check-{{ loop.index }}"{% if has_events %} class="has-events"{% endif %}>
             <td>{{ loop.index }}</td>
-            <td><code>{{ check | check_type_label(config) }}</code></td>
             <td><strong>{{ check.name or "—" }}</strong></td>
+            <td><code>{{ check | check_type_label(config) }}</code></td>
             <td>{{ check | check_detail(config) }}</td>
           </tr>
-          {%- set has_events = (check.on_success and check.on_success.event) or (check.on_failure and check.on_failure.event) or check.skip_on_flag %}
           {%- if has_events %}
           <tr class="event-row">
             <td></td>
-            <td colspan="3" class="event-cell">
-              {%- if check.on_success and check.on_success.event %}
-              <span class="tag tag-success event">&#10003; {{ check.on_success.event }}</span>
-              {%- endif %}
+            <td colspan="3">
+              <div class="event-cell">
               {%- if check.on_failure and check.on_failure.event %}
               <span class="tag tag-fail event">&#10007; {{ check.on_failure.event }}</span>
+              {%- endif %}
+              {%- if check.on_success and check.on_success.event %}
+              <span class="tag tag-success event">&#10003; {{ check.on_success.event }}</span>
               {%- endif %}
               {%- if check.skip_on_flag %}
               <span class="tag tag-skip">skip: --{{ check.skip_on_flag }}</span>
               {%- endif %}
+              </div>
             </td>
           </tr>
           {%- endif %}
