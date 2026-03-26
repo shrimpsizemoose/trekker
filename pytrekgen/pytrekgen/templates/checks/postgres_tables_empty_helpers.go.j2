@@ -1,0 +1,17 @@
+
+func checkPostgresTablesEmpty(db *sql.DB, tables []string, onStartEvent string) error {
+	if onStartEvent != "" {
+		tracker.Ping(onStartEvent, nil)
+	}
+	for _, table := range tables {
+		var count int
+		err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("проверка таблицы %s не удалась: %v", table, err)
+		}
+		if count > 0 {
+			return fmt.Errorf("таблица %s не пустая (записей: %d)", table, count)
+		}
+	}
+	return nil
+}

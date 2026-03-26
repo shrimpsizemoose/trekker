@@ -1,0 +1,9 @@
+	checkForbiddenAddress(
+		"{{ check.env_var | prefixed_env(config.env_prefix) }}",
+		[]string{{ '{' }}{% for f in check.forbidden %}"{{ f }}", {% endfor %}{{ '}' }},
+		"{{ check.on_failure.event }}",
+		"{{ check.on_failure.message }}",
+	)
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}

@@ -1,0 +1,8 @@
+	db, err = sql.Open("postgres", os.Getenv("{{ check.postgres_url_env | prefixed_env(config.env_prefix) }}"))
+	if err != nil {
+		logger.Error.Fatal(err)
+	}
+	defer db.Close()
+{% if check.on_connect %}
+	tracker.Ping("{{ check.on_connect }}", nil)
+{% endif %}

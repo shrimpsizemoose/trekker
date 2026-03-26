@@ -1,0 +1,7 @@
+	if !checkParam{{ check.env_var }}() {
+		tracker.Ping("{{ check.on_failure.event }}", nil)
+		logger.Error.Fatalf("{{ check.on_failure.message }}")
+	}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}

@@ -1,0 +1,69 @@
+	{
+		// http_batch_repeat: {{ check.name }} (reuses {{ check.reuse }})
+{% if check.message_before %}
+		logger.Info.Println("{{ check.message_before }}")
+{% endif %}
+		prevResults := batchResults["{{ check.reuse }}"]
+		if len(prevResults) == 0 {
+			logger.Error.Fatalf("No previous results for '{{ check.reuse }}'")
+		}
+
+		repeatErrors_{{ check.name }} := 0
+
+		{% set original = namespace(check=none) %}
+		{% for c in config.checks if c.name == check.reuse %}
+		{% set original.check = c %}
+		{% endfor %}
+		for i, prev := range prevResults {
+			respData, err := httpBatchRequest(rootCtx, "{{ original.check.method }}", {{ original.check.url | url_format(config.env_prefix) }}, "{{ original.check.content_type }}", prev.requestBody)
+			if err != nil {
+				logger.Error.Printf("Item %d: %v", i, err)
+				repeatErrors_{{ check.name }}++
+				continue
+			}
+
+			checkFailed := false
+{% for rc in check.response_checks %}
+			{
+				actual, ok := getJSONFieldAsString(respData, "{{ rc.field }}")
+				if !ok {
+					logger.Error.Printf("Item %d: response missing field '{{ rc.field }}'", i)
+					checkFailed = true
+				} else {
+{% if rc.expected %}
+					expected := "{{ rc.expected }}"
+{% elif rc.from_data %}
+					expected, _ := getJSONFieldAsString(prev.testData, "{{ rc.from_data }}")
+{% endif %}
+					if actual != expected {
+						logger.Error.Printf("Item %d: field '{{ rc.field }}' = '%s', expected '%s'", i, actual, expected)
+						checkFailed = true
+					}
+				}
+			}
+{% endfor %}
+
+			if checkFailed {
+				repeatErrors_{{ check.name }}++
+			}
+
+{% if original.check.delay_ms > 0 %}
+			if i < len(prevResults)-1 {
+				time.Sleep({{ original.check.delay_ms }} * time.Millisecond)
+			}
+{% endif %}
+		}
+
+		if repeatErrors_{{ check.name }} > 0 {
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+{% endif %}
+			logger.Error.Fatalf("{{ check.name }}: %d/%d failures", repeatErrors_{{ check.name }}, len(prevResults))
+		}
+{% if check.message_success %}
+		logger.Victory.Printf("{{ check.message_success }} (%d/%d)", len(prevResults), len(prevResults))
+{% endif %}
+{% if check.on_success.event %}
+		tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
+	}

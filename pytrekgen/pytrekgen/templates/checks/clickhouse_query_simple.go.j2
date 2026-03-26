@@ -1,0 +1,81 @@
+	{
+		// clickhouse_query_simple: {{ check.name }}
+{% if check.message_before %}
+		logger.Info.Println("{{ check.message_before }}")
+{% endif %}
+{% if check.on_request %}
+		tracker.Ping("{{ check.on_request }}", nil)
+{% endif %}
+{% set query_vars = check.query | extract_vars %}
+{% if query_vars %}
+		chResult, chLines, chErr := clickhouseQuerySimple(
+			os.Getenv("{{ check.clickhouse_addr_env | prefixed_env(config.env_prefix) }}"),
+{% if check.clickhouse_user_env %}
+			os.Getenv("{{ check.clickhouse_user_env | prefixed_env(config.env_prefix) }}"),
+{% else %}
+			"",
+{% endif %}
+{% if check.clickhouse_pass_env %}
+			os.Getenv("{{ check.clickhouse_pass_env | prefixed_env(config.env_prefix) }}"),
+{% else %}
+			"",
+{% endif %}
+			fmt.Sprintf("{{ check.query | url_to_format }}", {% for v in query_vars %}os.Getenv("{{ v | prefixed_env(config.env_prefix) }}"), {% endfor %}),
+		)
+{% else %}
+		chResult, chLines, chErr := clickhouseQuerySimple(
+			os.Getenv("{{ check.clickhouse_addr_env | prefixed_env(config.env_prefix) }}"),
+{% if check.clickhouse_user_env %}
+			os.Getenv("{{ check.clickhouse_user_env | prefixed_env(config.env_prefix) }}"),
+{% else %}
+			"",
+{% endif %}
+{% if check.clickhouse_pass_env %}
+			os.Getenv("{{ check.clickhouse_pass_env | prefixed_env(config.env_prefix) }}"),
+{% else %}
+			"",
+{% endif %}
+			"{{ check.query }}",
+		)
+{% endif %}
+{% if check.on_response %}
+		tracker.Ping("{{ check.on_response }}", nil)
+{% endif %}
+		if chErr != nil {
+			logger.Error.Println(chErr)
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+			logger.Error.Fatalf("{{ check.on_failure.message }}")
+{% else %}
+			logger.Error.Fatal("ClickHouse query failed")
+{% endif %}
+		}
+{% if check.expected %}
+		if chResult != "{{ check.expected }}" {
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+			logger.Error.Fatalf("{{ check.on_failure.message }}: expected '{{ check.expected }}', got '%s'", chResult)
+{% else %}
+			logger.Error.Fatalf("expected '{{ check.expected }}', got '%s'", chResult)
+{% endif %}
+		}
+{% endif %}
+{% if check.expected_rows >= 0 %}
+		if chLines != {{ check.expected_rows }} {
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+			logger.Error.Fatalf("{{ check.on_failure.message }}: expected {{ check.expected_rows }} rows, got %d", chLines)
+{% else %}
+			logger.Error.Fatalf("expected {{ check.expected_rows }} rows, got %d", chLines)
+{% endif %}
+		}
+{% endif %}
+{% if check.message_success %}
+		logger.Info.Println("{{ check.message_success }}")
+{% endif %}
+{% if check.on_success.event %}
+		tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
+		_ = chResult
+		_ = chLines
+	}

@@ -1,0 +1,51 @@
+
+var randValues = []byte("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+func getRandomPath(baseURL string) string {
+	size, err := rand.Int(rand.Reader, big.NewInt(118))
+	if err != nil {
+		panic(err)
+	}
+
+	buf := make([]byte, 10+size.Int64())
+	_, err = rand.Reader.Read(buf)
+	if err != nil {
+		panic(err)
+	}
+
+	ln := byte(len(randValues))
+	for i, v := range buf {
+		buf[i] = randValues[v%ln]
+	}
+
+	return fmt.Sprintf("%s/%s", baseURL, string(buf))
+}
+
+func httpCheck(ctx context.Context, url string, expectedStatus int, msgBefore, msgSuccess, msgFail, onRequestEvent, onResponseEvent string) error {
+	logger.Info.Printf("%s: %s", msgBefore, url)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	if onRequestEvent != "" {
+		tracker.Ping(onRequestEvent, nil)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if onResponseEvent != "" {
+		tracker.Ping(onResponseEvent, nil)
+	}
+
+	if resp.StatusCode != expectedStatus {
+		return fmt.Errorf("%s, получил %s", msgFail, resp.Status)
+	}
+	logger.Victory.Print(msgSuccess)
+	return nil
+}

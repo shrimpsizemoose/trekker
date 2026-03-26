@@ -1,0 +1,19 @@
+
+func checkForbiddenAddress(envVar string, forbidden []string, failEvent, failMsg string) error {
+	addr := os.Getenv(envVar)
+	// Extract host from host:port format
+	host := addr
+	if idx := strings.LastIndex(addr, ":"); idx != -1 {
+		host = addr[:idx]
+	}
+
+	for _, f := range forbidden {
+		if host == f || addr == f {
+			if failEvent != "" {
+				tracker.Ping(failEvent, nil)
+			}
+			logger.Error.Fatalf("%s", failMsg)
+		}
+	}
+	return nil
+}

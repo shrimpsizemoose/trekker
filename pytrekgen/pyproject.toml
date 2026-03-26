@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytrekgen"
-version = "7.4"
+version = "8.1"
 description = "Python-based code generator for trekker lab checkers"
 requires-python = ">=3.11"
 dependencies = [

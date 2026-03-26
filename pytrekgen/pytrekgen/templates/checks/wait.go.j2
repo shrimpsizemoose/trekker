@@ -1,0 +1,7 @@
+{% if check.message %}
+	logger.Info.Println("{{ check.message }}")
+{% endif %}
+	time.Sleep({{ check.seconds }} * time.Second)
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}

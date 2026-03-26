@@ -1,0 +1,72 @@
+
+// renderBatchTemplate replaces {% raw %}{{.field}}{% endraw %} placeholders with values from data
+func renderBatchTemplate(tmpl string, data map[string]interface{}) string {
+	result := tmpl
+	for key, val := range data {
+		placeholder := "{% raw %}{{.{% endraw %}" + key + "{% raw %}}}{% endraw %}"
+		var strVal string
+		switch v := val.(type) {
+		case float64:
+			if v == float64(int64(v)) {
+				strVal = fmt.Sprintf("%d", int64(v))
+			} else {
+				strVal = fmt.Sprintf("%v", v)
+			}
+		default:
+			strVal = fmt.Sprintf("%v", v)
+		}
+		result = strings.ReplaceAll(result, placeholder, strVal)
+	}
+	return result
+}
+
+// getJSONFieldAsString extracts a field from JSON map and converts to string
+func getJSONFieldAsString(data map[string]interface{}, field string) (string, bool) {
+	val, ok := data[field]
+	if !ok {
+		return "", false
+	}
+	switch v := val.(type) {
+	case string:
+		return v, true
+	case float64:
+		if v == float64(int64(v)) {
+			return fmt.Sprintf("%d", int64(v)), true
+		}
+		return fmt.Sprintf("%v", v), true
+	case bool:
+		return fmt.Sprintf("%t", v), true
+	case nil:
+		return "null", true
+	default:
+		return fmt.Sprintf("%v", v), true
+	}
+}
+
+// httpBatchRequest sends a single HTTP request and returns parsed JSON response
+func httpBatchRequest(ctx context.Context, method, url, contentType, body string) (map[string]interface{}, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w (body: %s)", err, string(respBody))
+	}
+	return result, nil
+}

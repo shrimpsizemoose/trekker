@@ -1,0 +1,12 @@
+{% if check.message_before %}
+	if err := checkPostgresTablesEmpty(db, []string{{ '{' }}{% for t in check.tables %}"{{ t }}", {% endfor %}{{ '}' }}, "{{ check.on_start }}"); err != nil {
+		logger.Error.Fatalf("{{ check.message_before }}: %v", err)
+	}
+{% else %}
+	if err := checkPostgresTablesEmpty(db, []string{{ '{' }}{% for t in check.tables %}"{{ t }}", {% endfor %}{{ '}' }}, "{{ check.on_start }}"); err != nil {
+		logger.Error.Fatal(err)
+	}
+{% endif %}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}

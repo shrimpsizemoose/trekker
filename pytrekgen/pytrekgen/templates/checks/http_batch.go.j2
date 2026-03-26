@@ -1,0 +1,73 @@
+	{
+		// http_batch: {{ check.name }}
+{% if check.message_before %}
+		logger.Info.Println("{{ check.message_before }}")
+{% endif %}
+		var batchTestData_{{ check.name }} []map[string]interface{}
+		if err := json.Unmarshal({{ check.test_data }}Data, &batchTestData_{{ check.name }}); err != nil {
+			logger.Error.Fatalf("Failed to parse test data '{{ check.test_data }}': %v", err)
+		}
+
+		batchErrors_{{ check.name }} := 0
+		batchResults["{{ check.name }}"] = nil
+
+		for i, item := range batchTestData_{{ check.name }} {
+			body := renderBatchTemplate(`{{ check.request_template }}`, item)
+
+			respData, err := httpBatchRequest(rootCtx, "{{ check.method }}", {{ check.url | url_format(config.env_prefix) }}, "{{ check.content_type }}", body)
+			if err != nil {
+				logger.Error.Printf("Item %d: %v", i, err)
+				batchErrors_{{ check.name }}++
+				continue
+			}
+
+			checkFailed := false
+{% for rc in check.response_checks %}
+			{
+				actual, ok := getJSONFieldAsString(respData, "{{ rc.field }}")
+				if !ok {
+					logger.Error.Printf("Item %d: response missing field '{{ rc.field }}'", i)
+					checkFailed = true
+				} else {
+{% if rc.expected %}
+					expected := "{{ rc.expected }}"
+{% elif rc.from_data %}
+					expected, _ := getJSONFieldAsString(item, "{{ rc.from_data }}")
+{% endif %}
+					if actual != expected {
+						logger.Error.Printf("Item %d: field '{{ rc.field }}' = '%s', expected '%s'", i, actual, expected)
+						checkFailed = true
+					}
+				}
+			}
+{% endfor %}
+
+			if checkFailed {
+				batchErrors_{{ check.name }}++
+			} else {
+				batchResults["{{ check.name }}"] = append(batchResults["{{ check.name }}"], batchRequestData{
+					requestBody: body,
+					testData:    item,
+				})
+			}
+
+{% if check.delay_ms > 0 %}
+			if i < len(batchTestData_{{ check.name }})-1 {
+				time.Sleep({{ check.delay_ms }} * time.Millisecond)
+			}
+{% endif %}
+		}
+
+		if batchErrors_{{ check.name }} > 0 {
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+{% endif %}
+			logger.Error.Fatalf("{{ check.name }}: %d/%d failures", batchErrors_{{ check.name }}, len(batchTestData_{{ check.name }}))
+		}
+{% if check.message_success %}
+		logger.Victory.Printf("{{ check.message_success }} (%d/%d)", len(batchTestData_{{ check.name }}), len(batchTestData_{{ check.name }}))
+{% endif %}
+{% if check.on_success.event %}
+		tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
+	}

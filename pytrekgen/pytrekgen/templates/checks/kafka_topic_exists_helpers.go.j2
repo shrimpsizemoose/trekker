@@ -1,0 +1,32 @@
+
+func checkKafkaTopicExists(addr, topic, onConnectEvent, onPartitionsReadEvent string) error {
+	logger.Info.Printf("Проверяю наличие топика %s в Kafka...", topic)
+
+	conn, err := kafka.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("не удалось подключиться к Kafka: %w", err)
+	}
+	defer conn.Close()
+
+	if onConnectEvent != "" {
+		tracker.Ping(onConnectEvent, nil)
+	}
+
+	partitions, err := conn.ReadPartitions()
+	if err != nil {
+		return fmt.Errorf("не удалось прочитать партиции: %w", err)
+	}
+
+	if onPartitionsReadEvent != "" {
+		tracker.Ping(onPartitionsReadEvent, nil)
+	}
+
+	for _, p := range partitions {
+		if p.Topic == topic {
+			logger.Victory.Printf("Топик %s найден", topic)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("топик %s не найден в Kafka", topic)
+}

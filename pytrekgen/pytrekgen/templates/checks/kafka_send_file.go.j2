@@ -1,0 +1,31 @@
+	{
+		// kafka_send_file: {{ check.name }}
+		file, err := os.Open("{{ check.file }}")
+		if err != nil {
+			logger.Error.Fatalf("Failed to open file: %v", err)
+		}
+		defer file.Close()
+
+		writer := infra.NewKafkaWriter(infra.KafkaConfig{
+			Addr:  os.Getenv("{{ check.kafka_addr_env | prefixed_env(config.env_prefix) }}"),
+			Topic: os.Getenv("{{ check.kafka_topic_env | prefixed_env(config.env_prefix) }}"),
+		})
+		defer writer.Close()
+
+		scanner := bufio.NewScanner(file)
+		var messages [][]byte
+		for scanner.Scan() {
+			messages = append(messages, []byte(scanner.Text()))
+		}
+
+		if err := writer.WriteMessages(rootCtx, messages); err != nil {
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+{% endif %}
+			logger.Error.Fatalf("Failed to send messages: %v", err)
+		}
+		logger.Victory.Printf("Sent %d messages from file", len(messages))
+	}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}

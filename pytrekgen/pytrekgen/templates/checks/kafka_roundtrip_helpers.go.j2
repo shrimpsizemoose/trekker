@@ -1,0 +1,68 @@
+
+func kafkaRoundtrip(ctx context.Context, addr, topic string, msgCount, waitSec int, generator string, onFailEvent, onSuccessEvent string) error {
+	logger.Info.Printf("Запускаю roundtrip тест: %d сообщений в топик %s", msgCount, topic)
+
+	// Generate messages
+	messages := make([][]byte, msgCount)
+	for i := 0; i < msgCount; i++ {
+		var msg string
+		switch generator {
+		case "sequential":
+			msg = fmt.Sprintf("test-message-%d", i)
+		case "timestamp":
+			msg = fmt.Sprintf("msg-%d-%d", i, time.Now().UnixNano())
+		case "uuid":
+			msg = fmt.Sprintf("msg-%d-%d", i, time.Now().UnixNano())
+		default:
+			msg = fmt.Sprintf("test-message-%d", i)
+		}
+		messages[i] = []byte(msg)
+	}
+
+	// Produce messages
+	writer := infra.NewKafkaWriter(infra.KafkaConfig{
+		Addr:  addr,
+		Topic: topic,
+	})
+	defer writer.Close()
+
+	if err := writer.WriteMessages(ctx, messages); err != nil {
+		if onFailEvent != "" {
+			tracker.Ping(onFailEvent, nil)
+		}
+		return fmt.Errorf("не удалось отправить сообщения: %w", err)
+	}
+	logger.Victory.Printf("Отправлено %d сообщений", msgCount)
+
+	// Wait
+	logger.Info.Printf("Жду %d секунд...", waitSec)
+	time.Sleep(time.Duration(waitSec) * time.Second)
+
+	// Consume messages
+	reader := infra.NewKafkaReader(infra.KafkaConfig{
+		Addr:  addr,
+		Topic: topic,
+	})
+	defer reader.Close()
+
+	received := 0
+	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	for received < msgCount {
+		_, err := reader.ReadMessage(readCtx)
+		if err != nil {
+			if onFailEvent != "" {
+				tracker.Ping(onFailEvent, nil)
+			}
+			return fmt.Errorf("не удалось прочитать сообщение %d/%d: %w", received+1, msgCount, err)
+		}
+		received++
+	}
+
+	logger.Victory.Printf("Получено %d сообщений", received)
+	if onSuccessEvent != "" {
+		tracker.Ping(onSuccessEvent, nil)
+	}
+	return nil
+}

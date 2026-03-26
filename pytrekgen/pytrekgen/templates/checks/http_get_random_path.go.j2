@@ -1,0 +1,15 @@
+	if err := httpCheck(rootCtx,
+		getRandomPath({{ check.url | url_format(config.env_prefix) }}),
+		{{ check.expected_status }},
+		"{{ check.message_before }}",
+		"{{ check.message_success }}",
+		"{{ check.on_failure.message }}",
+		"{{ check.on_request }}",
+		"{{ check.on_response }}",
+	); err != nil {
+		tracker.Ping("{{ check.on_failure.event }}", nil)
+		logger.Error.Fatal(err)
+	}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}

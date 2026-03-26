@@ -1,0 +1,65 @@
+	{
+		// http_request: {{ check.name }}
+{% if check.message_before %}
+		logger.Info.Println("{{ check.message_before }}")
+{% endif %}
+		reqBody := strings.NewReader(`{{ check.body }}`)
+		req, err := http.NewRequestWithContext(rootCtx, "{{ check.method }}", {{ check.url | url_format(config.env_prefix) }}, reqBody)
+		if err != nil {
+			logger.Error.Fatal(err)
+		}
+{% if check.content_type %}
+		req.Header.Set("Content-Type", "{{ check.content_type }}")
+{% endif %}
+{% if check.auth.type == "basic" %}
+		req.SetBasicAuth(
+			os.Getenv("{{ check.auth.user_env | prefixed_env(config.env_prefix) }}"),
+			os.Getenv("{{ check.auth.pass_env | prefixed_env(config.env_prefix) }}"),
+		)
+{% elif check.auth.type == "bearer" %}
+		req.Header.Set("Authorization", "Bearer "+os.Getenv("{{ check.auth.token_env | prefixed_env(config.env_prefix) }}"))
+{% endif %}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			logger.Error.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != {{ check.expected_status }} {
+{% if check.on_failure.event %}
+			tracker.Ping("{{ check.on_failure.event }}", nil)
+{% endif %}
+			logger.Error.Fatalf("{{ check.on_failure.message | default('unexpected status') }}: got %s", resp.Status)
+		}
+
+{% if check.response_checks %}
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			logger.Error.Fatal(err)
+		}
+		var respData map[string]interface{}
+		if err := json.Unmarshal(respBody, &respData); err != nil {
+			logger.Error.Fatalf("failed to parse response: %v", err)
+		}
+{% for rc in check.response_checks %}
+		{
+			actual, ok := getJSONFieldAsString(respData, "{{ rc.field }}")
+			if !ok {
+				logger.Error.Fatalf("response missing field '{{ rc.field }}'")
+			}
+{% if rc.expected %}
+			if actual != "{{ rc.expected }}" {
+				logger.Error.Fatalf("field '{{ rc.field }}' = '%s', expected '{{ rc.expected }}'", actual)
+			}
+{% endif %}
+		}
+{% endfor %}
+{% endif %}
+{% if check.message_success %}
+		logger.Victory.Print("{{ check.message_success }}")
+{% endif %}
+	}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}

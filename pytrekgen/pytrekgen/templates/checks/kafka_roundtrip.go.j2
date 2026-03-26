@@ -1,0 +1,12 @@
+	if err := kafkaRoundtrip(
+		rootCtx,
+		os.Getenv("{{ check.kafka_addr_env | prefixed_env(config.env_prefix) }}"),
+		os.Getenv("{{ check.kafka_topic_env | prefixed_env(config.env_prefix) }}"),
+		{{ check.message_count }},
+		{{ check.wait_seconds }},
+		"{{ check.message_generator }}",
+		"{{ check.on_failure.event }}",
+		"{{ check.on_success.event }}",
+	); err != nil {
+		logger.Error.Fatal(err)
+	}

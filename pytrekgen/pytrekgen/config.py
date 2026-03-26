@@ -12,6 +12,23 @@ from pydantic import BaseModel, Field, model_validator
 BASE_IMPORTS: set[str] = {"fmt", "os", "flag"}
 
 # Each check type declares which Go stdlib imports it needs.
+# Each check type declares which helper template partials it needs.
+CHECK_TYPE_HELPERS: dict[str, list[str]] = {
+    "param_equals": ["checks/param_equals_helpers.go.j2"],
+    "forbidden_address": ["checks/forbidden_address_helpers.go.j2"],
+    "http_get": ["checks/http_get_helpers.go.j2"],
+    "http_get_random_path": ["checks/http_get_helpers.go.j2"],
+    "http_request": [],
+    "http_batch": ["checks/http_batch_helpers.go.j2"],
+    "http_batch_repeat": ["checks/http_batch_helpers.go.j2"],
+    "kafka_topic_exists": ["checks/kafka_topic_exists_helpers.go.j2"],
+    "kafka_roundtrip": ["checks/kafka_roundtrip_helpers.go.j2"],
+    "kafka_send_file": [],
+    "postgres_tables_empty": ["checks/postgres_tables_empty_helpers.go.j2"],
+    "clickhouse_query_simple": ["checks/clickhouse_query_simple_helpers.go.j2"],
+}
+
+# Each check type declares which Go stdlib imports it needs.
 CHECK_TYPE_STDLIB_IMPORTS: dict[str, set[str]] = {
     "param_equals": {"strings"},
     "forbidden_address": {"strings"},
@@ -648,6 +665,17 @@ class LabConfig(BaseModel):
                         update={"default": opt_defaults[field.name]}
                     )
                 result.append(field)
+        return result
+
+    @property
+    def required_helper_templates(self) -> list[str]:
+        """Compute unique ordered list of helper template partials needed."""
+        seen: set[str] = set()
+        result: list[str] = []
+        for check in self.checks:
+            for tpl in CHECK_TYPE_HELPERS.get(check.type, []):
+                if (tpl not in seen) and (seen := seen | {tpl}):
+                    result.append(tpl)
         return result
 
     @property

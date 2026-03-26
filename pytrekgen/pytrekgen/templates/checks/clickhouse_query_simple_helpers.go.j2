@@ -1,0 +1,36 @@
+
+func clickhouseQuerySimple(addr, user, pass, query string) (string, int, error) {
+	params := url.Values{}
+	params.Add("query", query)
+	if user != "" {
+		params.Add("user", user)
+	}
+	if pass != "" {
+		params.Add("password", pass)
+	}
+
+	clickURL := fmt.Sprintf("http://%s/?%s", addr, params.Encode())
+	resp, err := http.Get(clickURL)
+	if err != nil {
+		return "", 0, fmt.Errorf("connection failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", 0, fmt.Errorf("ClickHouse returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	result := strings.TrimSpace(string(body))
+	lines := 0
+	if result != "" {
+		lines = len(strings.Split(result, "\n"))
+	}
+
+	return result, lines, nil
+}

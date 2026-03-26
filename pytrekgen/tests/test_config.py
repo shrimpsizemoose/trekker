@@ -478,6 +478,82 @@ class TestCustomCode:
         assert "myFunc" in cc.code
 
 
+def test_helper_templates_empty_when_no_helpers_needed():
+    config = minimal_config(checks=[{"type": "wait", "seconds": 5}])
+    assert config.required_helper_templates == []
+
+
+def test_helper_templates_empty_when_no_checks():
+    config = minimal_config(checks=[])
+    assert config.required_helper_templates == []
+
+
+def test_helper_templates_single_check_type():
+    config = minimal_config(
+        checks=[{"type": "http_get", "url": "http://localhost"}]
+    )
+    assert config.required_helper_templates == ["checks/http_get_helpers.go.j2"]
+
+
+def test_helper_templates_deduplicates_same_check_type():
+    config = minimal_config(
+        checks=[
+            {"type": "http_get", "url": "http://localhost/a"},
+            {"type": "http_get", "url": "http://localhost/b"},
+        ]
+    )
+    assert config.required_helper_templates == ["checks/http_get_helpers.go.j2"]
+
+
+def test_helper_templates_shared_helpers_deduplicated():
+    """http_get and http_get_random_path share the same helpers."""
+    config = minimal_config(
+        checks=[
+            {"type": "http_get", "url": "http://localhost"},
+            {"type": "http_get_random_path", "url": "http://localhost"},
+        ]
+    )
+    assert config.required_helper_templates == ["checks/http_get_helpers.go.j2"]
+
+
+def test_helper_templates_order_follows_check_order():
+    config = minimal_config(
+        checks=[
+            {"type": "forbidden_address", "env_var": "X", "forbidden": ["y"]},
+            {"type": "kafka_topic_exists", "kafka_addr_env": "K", "kafka_topic_env": "T"},
+            {"type": "param_equals", "env_var": "M", "expected": "v"},
+        ]
+    )
+    assert config.required_helper_templates == [
+        "checks/forbidden_address_helpers.go.j2",
+        "checks/kafka_topic_exists_helpers.go.j2",
+        "checks/param_equals_helpers.go.j2",
+    ]
+
+
+def test_helper_templates_custom_and_wait_have_none():
+    config = minimal_config(
+        checks=[
+            {"type": "custom", "func": "myFunc"},
+            {"type": "wait", "seconds": 5},
+        ]
+    )
+    assert config.required_helper_templates == []
+
+
+def test_helper_templates_multiple_kafka_types():
+    config = minimal_config(
+        checks=[
+            {"type": "kafka_topic_exists", "kafka_addr_env": "K", "kafka_topic_env": "T"},
+            {"type": "kafka_roundtrip", "kafka_addr_env": "K", "kafka_topic_env": "T"},
+        ]
+    )
+    assert config.required_helper_templates == [
+        "checks/kafka_topic_exists_helpers.go.j2",
+        "checks/kafka_roundtrip_helpers.go.j2",
+    ]
+
+
 class TestGetFilteredImports:
     """Tests for get_filtered_imports() method."""
 

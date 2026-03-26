@@ -9,6 +9,10 @@ tell-dependabot-issues:
 echo-version:
     @echo current version = {{ VERSION }}
 
+# Run pytrekgen tests
+test:
+    cd pytrekgen && uv run pytest
+
 pytrekgen-example-lab00:
     cd pytrekgen && uv run pytrekgen -i examples/lab00.yaml
 

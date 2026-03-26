@@ -655,7 +655,7 @@ wheels = [
 
 [[package]]
 name = "pytrekgen"
-version = "0.1"
+version = "8.1"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },

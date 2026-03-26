@@ -1,0 +1,13 @@
+
+{% for check in config.checks if check.type == "param_equals" %}
+func checkParam{{ check.env_var }}() bool {
+	param := os.Getenv("{{ check.env_var | prefixed_env(config.env_prefix) }}")
+{% if check.case_insensitive %}
+	value := strings.ToLower(param)
+	return value == "{{ check.expected }}"
+{% else %}
+	return param == "{{ check.expected }}"
+{% endif %}
+}
+
+{% endfor %}
