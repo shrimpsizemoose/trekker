@@ -59,6 +59,18 @@ def main() -> None:
         help="Generate go.mod alongside the checker (requires -o and build.module in config)",
     )
 
+    viz_group = parser.add_mutually_exclusive_group()
+    viz_group.add_argument(
+        "--ascii",
+        action="store_true",
+        help="Print ASCII flow visualization instead of generating code",
+    )
+    viz_group.add_argument(
+        "--html",
+        action="store_true",
+        help="Print HTML flow visualization instead of generating code",
+    )
+
     args = parser.parse_args()
 
     if args.debug:
@@ -82,6 +94,12 @@ def main() -> None:
         log.error("Failed to parse config: %s", e)
         sys.exit(1)
 
+    viz_fmt = "ascii" if args.ascii else "html" if args.html else None
+
+    if viz_fmt and args.with_gomod:
+        log.error("--with-gomod cannot be used with --ascii or --html")
+        sys.exit(1)
+
     if args.with_gomod and not args.output_path:
         log.error("--with-gomod requires -o/--output")
         sys.exit(1)
@@ -91,19 +109,28 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        source_file = args.input_path.name
-        if args.output_path:
-            generator.generate_to_file(
-                config, args.output_path, source_file=source_file
-            )
-            log.info("Generated: %s", args.output_path)
-
-            if args.with_gomod:
-                generator.generate_gomod_to_file(config, args.output_path.parent)
-                log.info("Generated: %s", args.output_path.parent / "go.mod")
+        if viz_fmt:
+            output = generator.generate_flow(config, fmt=viz_fmt)
+            if args.output_path:
+                args.output_path.parent.mkdir(parents=True, exist_ok=True)
+                args.output_path.write_text(output)
+                log.info("Generated: %s", args.output_path)
+            else:
+                sys.stdout.write(output)
         else:
-            code = generator.generate(config, source_file=source_file)
-            sys.stdout.write(code)
+            source_file = args.input_path.name
+            if args.output_path:
+                generator.generate_to_file(
+                    config, args.output_path, source_file=source_file
+                )
+                log.info("Generated: %s", args.output_path)
+
+                if args.with_gomod:
+                    generator.generate_gomod_to_file(config, args.output_path.parent)
+                    log.info("Generated: %s", args.output_path.parent / "go.mod")
+            else:
+                code = generator.generate(config, source_file=source_file)
+                sys.stdout.write(code)
     except Exception as e:
         log.error("Failed to generate code: %s", e)
         sys.exit(1)

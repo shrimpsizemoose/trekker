@@ -1,10 +1,15 @@
 """Code generator using Jinja2 templates."""
 
 import re
+from io import StringIO
 from pathlib import Path
 
 import yaml
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from .config import LabConfig
 
@@ -33,6 +38,7 @@ class Generator:
         self.env.filters["extract_vars"] = self._extract_vars
         self.env.filters["url_format"] = self._url_format
         self.env.filters["prefixed_env"] = self._prefixed_env
+        self.env.filters["check_detail"] = self._check_detail
 
     @staticmethod
     def _quote(value: str) -> str:
@@ -76,6 +82,46 @@ class Generator:
     def _extract_vars(url: str) -> list[str]:
         """Extract variable names from 'http://${VAR1}/${VAR2}'."""
         return re.findall(r"\$\{([^}]+)\}", url)
+
+    @staticmethod
+    def _check_detail(check) -> str:
+        """Extract a display-friendly one-line detail string from a check."""
+        match check.type:
+            case "param_equals":
+                cmp = " (case-insensitive)" if check.case_insensitive else ""
+                return f"{check.env_var} == {check.expected!r}{cmp}"
+            case "forbidden_address":
+                return f"{check.env_var} not in [{', '.join(check.forbidden)}]"
+            case "wait":
+                return f"wait {check.seconds}s"
+            case "http_get":
+                return f"GET {check.url} → {check.expected_status}"
+            case "http_get_random_path":
+                return f"GET {check.url}/??? → {check.expected_status}"
+            case "http_request":
+                return f"{check.method} {check.url} → {check.expected_status}"
+            case "http_batch":
+                return f"batch {check.method} {check.url} (data: {check.test_data})"
+            case "http_batch_repeat":
+                return f"repeat batch {check.reuse}"
+            case "kafka_topic_exists":
+                return f"topic: ${{{check.kafka_topic_env}}} @ ${{{check.kafka_addr_env}}}"
+            case "kafka_roundtrip":
+                return f"roundtrip {check.message_count} msgs @ ${{{check.kafka_addr_env}}}"
+            case "kafka_send_file":
+                return f"send {check.file} → ${{{check.kafka_topic_env}}}"
+            case "postgres_connect":
+                return f"connect ${{{check.postgres_url_env}}}"
+            case "postgres_tables_empty":
+                return f"tables empty: {', '.join(check.tables)}"
+            case "clickhouse_query_simple":
+                if check.expected:
+                    return f"query: {check.query} → {check.expected!r}"
+                return f"query: {check.query} → {check.expected_rows} rows"
+            case "custom":
+                return f"func: {check.func}()"
+            case _:
+                return check.type
 
     @staticmethod
     def _strip_build_constraints(content: str) -> str:
@@ -185,6 +231,113 @@ class Generator:
             confirm_fields=config.get_confirm_fields(),
             source_file=source_file,
         )
+
+    def generate_flow(self, config: LabConfig, fmt: str = "ascii") -> str:
+        match fmt:
+            case "ascii":
+                return self._render_ascii(config)
+            case _:
+                template = self.env.get_template(f"flow.{fmt}.j2")
+                return template.render(config=config)
+
+    @classmethod
+    def _render_ascii(cls, config: LabConfig) -> str:
+        buf = StringIO()
+        console = Console(file=buf, width=72, highlight=False)
+        prefix = config.lab.env_prefix
+
+        # --- Header ---
+        header = Text()
+        header.append(f"Lab {config.lab.id}: {config.lab.name}", style="bold")
+        if prefix:
+            header.append(f"\nPrefix: {prefix}")
+        console.print(Panel(header, style="blue"))
+
+        # --- Env vars ---
+        if config.required_env or config.optional_env or config.optional_env_int:
+            env_table = Table(show_header=True, expand=True, box=None, padding=(0, 1))
+            env_table.add_column("Variable", style="bold")
+            env_table.add_column("Kind")
+            env_table.add_column("Default", style="dim")
+            for env in config.required_env:
+                env_table.add_row(cls._prefixed_env(env.name, prefix), "required", "")
+            for env in config.optional_env:
+                env_table.add_row(
+                    cls._prefixed_env(env.name, prefix), "optional", env.default
+                )
+            for env in config.optional_env_int:
+                env_table.add_row(
+                    cls._prefixed_env(env.name, prefix), "optional", str(env.default)
+                )
+            console.print(Panel(env_table, title="Environment", style="cyan"))
+
+        # --- Start event ---
+        console.print("         │", style="dim")
+        console.print("         │  **000_lab_start**", style="dim")
+        console.print("         ▼", style="dim")
+
+        # --- Checks ---
+        for i, check in enumerate(config.checks, 1):
+            detail = cls._check_detail(check)
+            name = check.name or "unnamed"
+
+            body = Text()
+            body.append(detail)
+
+            events = []
+            if check.on_success and check.on_success.event:
+                events.append(("✓ ", "green", check.on_success.event))
+            if check.on_failure and check.on_failure.event:
+                events.append(("✗ ", "red", check.on_failure.event))
+            if check.skip_on_flag:
+                events.append(("⊘ ", "yellow", f"skip if --{check.skip_on_flag}"))
+
+            if events:
+                body.append("\n")
+                for symbol, style, text in events:
+                    body.append(symbol, style=style)
+                    body.append(text, style="dim")
+                    body.append("  ")
+
+            title = f"{i}. [bold]{name}[/bold]  [dim]\\[{check.type}][/dim]"
+            console.print(Panel(body, title=title, style="white"))
+
+            if i < len(config.checks):
+                console.print("         │", style="dim")
+                console.print("         ▼", style="dim")
+
+        # --- Finish event + Success ---
+        console.print("         │", style="dim")
+        console.print("         │  **100_lab_finish**", style="dim")
+        console.print("         ▼", style="dim")
+        console.print(
+            Panel(
+                Text("✅ Success", justify="center"),
+                style="green",
+            )
+        )
+
+        # --- Analytics footer ---
+        footer = Text()
+        analytics_desc = config.analytics.url_env
+        if config.analytics.skip_tls:
+            analytics_desc += " (skip_tls)"
+        if config.analytics.offline:
+            analytics_desc += " (offline)"
+        footer.append(f"Analytics: {analytics_desc}\n")
+
+        if config.analytics.headers:
+            parts = [f"{k}={v}" for k, v in config.analytics.headers.items()]
+            footer.append(f"Headers: {', '.join(parts)}\n", style="dim")
+
+        flag_names = ["--ping", "--version", "--checks"]
+        for f in config.flags:
+            flag_names.append(f"--{f.name}")
+        footer.append(f"Flags: {', '.join(flag_names)}")
+
+        console.print(Panel(footer, style="dim"))
+
+        return buf.getvalue()
 
     def generate_to_file(
         self, config: LabConfig, output_path: Path, source_file: str = ""

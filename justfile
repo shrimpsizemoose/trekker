@@ -25,6 +25,15 @@ pytrekgen-example-lab02:
 pytrekgen-example-lab03:
     cd pytrekgen && uv run pytrekgen -i examples/lab03.yaml
 
+# Visualize checker flow as ASCII
+visualize-ascii lab:
+    cd pytrekgen && uv run pytrekgen -i examples/{{lab}}.yaml --ascii
+
+# Visualize checker flow as HTML
+visualize-html lab:
+    cd pytrekgen && uv run pytrekgen -i examples/{{lab}}.yaml --html -o /tmp/{{lab}}-flow.html
+    @echo "Open /tmp/{{lab}}-flow.html in a browser"
+
 # Generate documentation locally for debugging
 docs-generate:
     cd pytrekgen && uv run python docs_generator.py

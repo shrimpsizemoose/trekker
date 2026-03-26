@@ -1,6 +1,6 @@
 """pytrekgen - Python-based code generator for trekker lab checkers."""
 
-__version__ = "0.1"
+__version__ = "8.1"
 
 from .config import LabConfig
 from .generator import Generator
