@@ -260,11 +260,71 @@ def test_check_detail_postgres():
 
 
 # ---------------------------------------------------------------------------
+# Mermaid output
+# ---------------------------------------------------------------------------
+
+
+def test_mermaid_starts_and_ends_with_fence(gen, lab01_config):
+    out = gen.generate_flow(lab01_config, fmt="mermaid")
+    assert out.startswith("```mermaid\n")
+    assert out.rstrip().endswith("```")
+
+
+def test_mermaid_has_graph_td(gen, lab01_config):
+    out = gen.generate_flow(lab01_config, fmt="mermaid")
+    assert "graph TD" in out
+
+
+def test_mermaid_has_bookend_events(gen, lab01_config):
+    out = gen.generate_flow(lab01_config, fmt="mermaid")
+    assert "000_lab_start" in out
+    assert "100_lab_finish" in out
+
+
+def test_mermaid_contains_check_names(gen, lab01_config):
+    out = gen.generate_flow(lab01_config, fmt="mermaid")
+    assert "base_url_check" in out
+    assert "random_404_check" in out
+    assert "student_path_check" in out
+
+
+def test_mermaid_contains_check_types(gen, lab01_config):
+    out = gen.generate_flow(lab01_config, fmt="mermaid")
+    assert "[http_get]" in out
+    assert "[http_get_random_path]" in out
+
+
+def test_mermaid_fail_node(gen, lab01_config):
+    out = gen.generate_flow(lab01_config, fmt="mermaid")
+    assert "FAIL{Fail}" in out
+    assert "016_base_check_failed" in out
+
+
+def test_mermaid_success_events(gen, rich_config):
+    out = gen.generate_flow(rich_config, fmt="mermaid")
+    assert "010_health_ok" in out
+    assert "011_health_fail" in out
+
+
+def test_mermaid_empty_checks(gen):
+    config = minimal_config(checks=[])
+    out = gen.generate_flow(config, fmt="mermaid")
+    assert out.startswith("```mermaid\n")
+    assert "graph TD" in out
+
+
+def test_mermaid_no_bold_html_in_labels(gen, lab01_config):
+    out = gen.generate_flow(lab01_config, fmt="mermaid")
+    assert "<b>" not in out
+    assert "font-size:1.1em" not in out
+
+
+# ---------------------------------------------------------------------------
 # Integration: all example YAMLs render without errors
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("fmt", ["ascii", "html"])
+@pytest.mark.parametrize("fmt", ["ascii", "html", "mermaid"])
 @pytest.mark.parametrize(
     "yaml_file",
     ["lab00.yaml", "lab01.yaml", "lab02.yaml", "lab03.yaml", "clickhouse_simple_test.yaml"],
@@ -300,6 +360,18 @@ def test_cli_html_to_file(examples_dir, tmp_path):
     assert out.exists()
     content = out.read_text()
     assert "<html" in content
+
+
+def test_cli_mermaid(examples_dir):
+    result = run_cli("-i", str(examples_dir / "lab01.yaml"), "--mermaid")
+    assert result.returncode == 0
+    assert result.stdout.startswith("```mermaid\n")
+    assert "base_url_check" in result.stdout
+
+
+def test_cli_mermaid_and_html_mutually_exclusive(examples_dir):
+    result = run_cli("-i", str(examples_dir / "lab01.yaml"), "--mermaid", "--html")
+    assert result.returncode != 0
 
 
 def test_cli_ascii_and_html_mutually_exclusive(examples_dir):

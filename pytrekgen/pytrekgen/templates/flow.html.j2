@@ -58,55 +58,7 @@
   <div class="main">
     <div class="mermaid-wrap">
       <pre class="mermaid">
-{% set br = '<br/>' %}
-{% set ml = [] %}
-{% set _ = ml.append('graph TD') %}
-{% set _ = ml.append('    START{{000_lab_start}} --> C1') %}
-{% for check in config.checks %}
-{% set i = loop.index %}
-{% set events = [] %}
-{% if check.on_request is defined and check.on_request %}
-{% set _ = events.append(check.on_request) %}
-{% endif %}
-{% if check.on_connect is defined and check.on_connect %}
-{% set _ = events.append(check.on_connect) %}
-{% endif %}
-{% if check.on_start is defined and check.on_start %}
-{% set _ = events.append(check.on_start) %}
-{% endif %}
-{% if check.on_response is defined and check.on_response %}
-{% set _ = events.append(check.on_response) %}
-{% endif %}
-{% if check.on_partitions_read is defined and check.on_partitions_read %}
-{% set _ = events.append(check.on_partitions_read) %}
-{% endif %}
-{% set label = '<b><span style="font-size:1.1em">%d. %s</span></b>%s[%s]' | format(i, check.name or 'unnamed', br, check.type) %}
-{% if events %}
-{% set label = label + br + events | join(', ') %}
-{% endif %}
-{% set _ = ml.append('    C%d["%s"]' | format(i, label)) %}
-{% if check.on_success and check.on_success.event %}
-{% if not loop.last %}
-{% set _ = ml.append('    C%d -- "%s" --> C%d' | format(i, check.on_success.event, i + 1)) %}
-{% else %}
-{% set _ = ml.append('    C%d -- "%s" --> SUCCESS{{100_lab_finish}}' | format(i, check.on_success.event)) %}
-{% endif %}
-{% else %}
-{% if not loop.last %}
-{% set _ = ml.append('    C%d --> C%d' | format(i, i + 1)) %}
-{% else %}
-{% set _ = ml.append('    C%d --> SUCCESS{{100_lab_finish}}' | format(i)) %}
-{% endif %}
-{% endif %}
-{% if check.on_failure and check.on_failure.event %}
-{% set _ = ml.append('    C%d -. "%s" .-> FAIL{Fail}' | format(i, check.on_failure.event)) %}
-{% endif %}
-{% endfor %}
-{% set _ = ml.append('    classDef startEnd fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20') %}
-{% set _ = ml.append('    classDef fail fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c') %}
-{% set _ = ml.append('    class START,SUCCESS startEnd') %}
-{% set _ = ml.append('    class FAIL fail') %}
-{{ ml | join('\n') }}
+{{ mermaid_text }}
       </pre>
     </div>
 
@@ -125,9 +77,9 @@
           {%- for check in config.checks %}
           <tr id="check-{{ loop.index }}">
             <td>{{ loop.index }}</td>
-            <td><code>{{ check.type }}</code></td>
+            <td><code>{{ check | check_type_label(config) }}</code></td>
             <td><strong>{{ check.name or "—" }}</strong></td>
-            <td>{{ check | check_detail }}</td>
+            <td>{{ check | check_detail(config) }}</td>
           </tr>
           {%- set has_events = (check.on_success and check.on_success.event) or (check.on_failure and check.on_failure.event) or check.skip_on_flag %}
           {%- if has_events %}

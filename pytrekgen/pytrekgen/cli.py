@@ -70,6 +70,11 @@ def main() -> None:
         action="store_true",
         help="Print HTML flow visualization instead of generating code",
     )
+    viz_group.add_argument(
+        "--mermaid",
+        action="store_true",
+        help="Print mermaid flowchart diagram instead of generating code",
+    )
 
     args = parser.parse_args()
 
@@ -94,10 +99,10 @@ def main() -> None:
         log.error("Failed to parse config: %s", e)
         sys.exit(1)
 
-    viz_fmt = "ascii" if args.ascii else "html" if args.html else None
+    viz_fmt = "ascii" if args.ascii else "html" if args.html else "mermaid" if args.mermaid else None
 
     if viz_fmt and args.with_gomod:
-        log.error("--with-gomod cannot be used with --ascii or --html")
+        log.error("--with-gomod cannot be used with visualization flags")
         sys.exit(1)
 
     if args.with_gomod and not args.output_path:

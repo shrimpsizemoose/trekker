@@ -39,6 +39,7 @@ class Generator:
         self.env.filters["url_format"] = self._url_format
         self.env.filters["prefixed_env"] = self._prefixed_env
         self.env.filters["check_detail"] = self._check_detail
+        self.env.filters["check_type_label"] = self._check_type_label
 
     @staticmethod
     def _quote(value: str) -> str:
@@ -84,7 +85,7 @@ class Generator:
         return re.findall(r"\$\{([^}]+)\}", url)
 
     @staticmethod
-    def _check_detail(check) -> str:
+    def _check_detail(check, config=None) -> str:
         """Extract a display-friendly one-line detail string from a check."""
         match check.type:
             case "param_equals":
@@ -119,9 +120,19 @@ class Generator:
                     return f"query: {check.query} → {check.expected!r}"
                 return f"query: {check.query} → {check.expected_rows} rows"
             case "custom":
-                return f"func: {check.func}()"
+                detail = f"func: {check.func}()"
+                if config and config.custom_code and config.custom_code.code_file:
+                    detail += f" [{config.custom_code.code_file}]"
+                return detail
             case _:
                 return check.type
+
+    @staticmethod
+    def _check_type_label(check, config=None) -> str:
+        """Return type label, enriched for custom checks with code_file."""
+        if check.type == "custom" and config and config.custom_code and config.custom_code.code_file:
+            return f"custom::{config.custom_code.code_file}"
+        return check.type
 
     @staticmethod
     def _strip_build_constraints(content: str) -> str:
@@ -236,9 +247,82 @@ class Generator:
         match fmt:
             case "ascii":
                 return self._render_ascii(config)
+            case "mermaid":
+                return self.generate_mermaid(config)
             case _:
+                mermaid_text = self._build_mermaid_lines(config, html_labels=True)
                 template = self.env.get_template(f"flow.{fmt}.j2")
-                return template.render(config=config)
+                return template.render(config=config, mermaid_text=mermaid_text)
+
+    @classmethod
+    def generate_mermaid(cls, config: LabConfig) -> str:
+        """Generate markdown-fenced mermaid flowchart."""
+        diagram = cls._build_mermaid_lines(config, html_labels=False)
+        return f"```mermaid\n{diagram}\n```\n"
+
+    @classmethod
+    def _build_mermaid_lines(cls, config: LabConfig, html_labels: bool = False) -> str:
+        """Build mermaid diagram lines from config.
+
+        Args:
+            config: Lab configuration.
+            html_labels: Use HTML formatting in node labels (for embedded HTML pages).
+
+        """
+        success = "SUCCESS{{100_lab_finish}}"
+        fail = "FAIL{Fail}"
+
+        lines = ["graph TD"]
+        lines.append("    START{{000_lab_start}} --> C1")
+
+        for i, check in enumerate(config.checks, 1):
+            name = check.name or "unnamed"
+
+            # Build events list for the label
+            events = []
+            for attr in ("on_request", "on_connect", "on_start", "on_response", "on_partitions_read"):
+                val = getattr(check, attr, None)
+                if val:
+                    events.append(val)
+
+            br = "<br/>"
+
+            type_label = cls._check_type_label(check, config)
+
+            if html_labels:
+                label = f'<b><span style="font-size:1.1em">{i}. {name}</span></b>{br}[{type_label}]'
+            else:
+                label = f"{i}. {name}{br}[{type_label}]"
+
+            if events:
+                styled = ", ".join(f"<i>{e}</i>" for e in events)
+                label += br + styled
+
+            lines.append(f'    C{i}["{label}"]')
+
+            # Connections
+            if check.on_success and check.on_success.event:
+                evt = f"<i>{check.on_success.event}</i>"
+                if i < len(config.checks):
+                    lines.append(f'    C{i} -- "{evt}" --> C{i + 1}')
+                else:
+                    lines.append(f'    C{i} -- "{evt}" --> ' + success)
+            else:
+                if i < len(config.checks):
+                    lines.append(f"    C{i} --> C{i + 1}")
+                else:
+                    lines.append(f"    C{i} --> " + success)
+
+            if check.on_failure and check.on_failure.event:
+                evt = f"<i>{check.on_failure.event}</i>"
+                lines.append(f'    C{i} -. "{evt}" .-> ' + fail)
+
+        lines.append("    classDef startEnd fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20")
+        lines.append("    classDef fail fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c")
+        lines.append("    class START,SUCCESS startEnd")
+        lines.append("    class FAIL fail")
+
+        return "\n".join(lines)
 
     @classmethod
     def _render_ascii(cls, config: LabConfig) -> str:
@@ -278,7 +362,7 @@ class Generator:
 
         # --- Checks ---
         for i, check in enumerate(config.checks, 1):
-            detail = cls._check_detail(check)
+            detail = cls._check_detail(check, config)
             name = check.name or "unnamed"
 
             body = Text()
@@ -299,7 +383,8 @@ class Generator:
                     body.append(text, style="dim")
                     body.append("  ")
 
-            title = f"{i}. [bold]{name}[/bold]  [dim]\\[{check.type}][/dim]"
+            type_label = cls._check_type_label(check, config)
+            title = f"{i}. [bold]{name}[/bold]  [dim]\\[{type_label}][/dim]"
             console.print(Panel(body, title=title, style="white"))
 
             if i < len(config.checks):
