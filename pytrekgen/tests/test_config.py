@@ -652,3 +652,44 @@ class TestGetFilteredImports:
         filtered = config.get_filtered_imports()
         assert "github.com/some/package" in filtered
         assert "time" not in filtered
+
+
+def test_filters_trekker_infra_when_kafka_checks_present():
+    config = minimal_config(
+        checks=[{"type": "kafka_topic_exists", "kafka_addr_env": "K", "kafka_topic_env": "T"}]
+    )
+    config.custom_code.imports = ["trekker:infra", "regexp"]
+    filtered = config.get_filtered_imports()
+    assert "trekker:infra" not in filtered
+    assert "regexp" in filtered
+
+
+def test_filters_trekker_utils_when_masked_fields_present():
+    config = minimal_config(
+        confirm_display=[{"name": "SECRET", "masked": True}],
+    )
+    config.custom_code.imports = ["trekker:utils", "regexp"]
+    filtered = config.get_filtered_imports()
+    assert "trekker:utils" not in filtered
+    assert "regexp" in filtered
+
+
+def test_filters_always_imported_trekker_packages():
+    config = minimal_config()
+    config.custom_code.imports = ["trekker:analytics", "trekker:cli", "trekker:env", "trekker:logger", "regexp"]
+    filtered = config.get_filtered_imports()
+    assert filtered == ["regexp"]
+
+
+def test_keeps_trekker_infra_without_kafka_checks():
+    config = minimal_config()
+    config.custom_code.imports = ["trekker:infra"]
+    filtered = config.get_filtered_imports()
+    assert "trekker:infra" in filtered
+
+
+def test_keeps_trekker_utils_without_masked_fields():
+    config = minimal_config()
+    config.custom_code.imports = ["trekker:utils"]
+    filtered = config.get_filtered_imports()
+    assert "trekker:utils" in filtered

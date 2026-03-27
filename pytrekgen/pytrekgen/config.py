@@ -686,6 +686,17 @@ class LabConfig(BaseModel):
             result |= CHECK_TYPE_STDLIB_IMPORTS.get(check.type, set())
         return result
 
+    @property
+    def auto_third_party_imports(self) -> set[str]:
+        """Trekker/third-party packages auto-imported by the template."""
+        auto = {"trekker:analytics", "trekker:cli", "trekker:env", "trekker:logger"}
+        if self.has_kafka_checks:
+            auto.add("trekker:infra")
+        if self.has_masked_fields:
+            auto.add("trekker:utils")
+        return auto
+
     def get_filtered_imports(self) -> list[str]:
         """Custom imports minus auto-generated ones."""
-        return [imp for imp in self.custom_code.imports if imp not in self.required_stdlib_imports]
+        excluded = self.required_stdlib_imports | self.auto_third_party_imports
+        return [imp for imp in self.custom_code.imports if imp not in excluded]
