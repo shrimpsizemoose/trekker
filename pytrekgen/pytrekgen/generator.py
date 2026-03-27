@@ -432,8 +432,16 @@ class Generator:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(code)
 
-    def generate_gomod(self, config: LabConfig) -> str:
+    def generate_gomod(
+        self,
+        config: LabConfig,
+        replace: dict[str, str] | None = None,
+    ) -> str:
         """Generate go.mod content.
+
+        Args:
+            config: Lab configuration
+            replace: Optional dict of module -> path replace directives
 
         Returns:
             go.mod content as string
@@ -447,6 +455,11 @@ class Generator:
             "",
             f"go {config.build.go_version}",
         ]
+
+        if replace:
+            lines.append("")
+            for module, path in replace.items():
+                lines.append(f"replace {module} => {path}")
 
         return "\n".join(lines) + "\n"
 

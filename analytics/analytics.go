@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -19,12 +20,15 @@ type Tracker interface {
 	PingStart()
 	PingFinish()
 	CheckConnection() error
+	RunID() string
 }
 
 type Config struct {
 	BaseURL       string
 	HealthURL     string
 	SkipTLS       bool
+	Version       string
+	SHA           string
 	CommonData    map[string]string
 	SecretHeaders map[string]string
 }
@@ -32,6 +36,15 @@ type Config struct {
 type Analytics struct {
 	config  Config
 	verbose bool
+	runID   string
+}
+
+func generateRunID() string {
+	b := make([]byte, 5)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("trkkr-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("trkkr-%x", b)
 }
 
 func NewAnalytics(config Config) Tracker {
@@ -39,7 +52,12 @@ func NewAnalytics(config Config) Tracker {
 	return &Analytics{
 		config:  config,
 		verbose: verbose,
+		runID:   generateRunID(),
 	}
+}
+
+func (a *Analytics) RunID() string {
+	return a.runID
 }
 
 func (a *Analytics) sendEvent(eventType string, additionalData map[string]string) error {
@@ -52,6 +70,14 @@ func (a *Analytics) sendEvent(eventType string, additionalData map[string]string
 	}
 	data["event_type"] = eventType
 	data["local_datetime"] = time.Now().String()
+
+	data["_run_id"] = a.runID
+	if a.config.Version != "" {
+		data["_version"] = a.config.Version
+	}
+	if a.config.SHA != "" {
+		data["_sha"] = a.config.SHA
+	}
 
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -177,12 +203,18 @@ func (a *Analytics) PingFinish() {
 // Use for testing and development.
 type OfflineAnalytics struct {
 	commonData map[string]string
+	runID      string
 }
 
 func NewOfflineAnalytics(config Config) Tracker {
 	return &OfflineAnalytics{
 		commonData: config.CommonData,
+		runID:      generateRunID(),
 	}
+}
+
+func (o *OfflineAnalytics) RunID() string {
+	return o.runID
 }
 
 func (o *OfflineAnalytics) Ping(eventType string, additionalData map[string]string) {
@@ -199,7 +231,7 @@ func (o *OfflineAnalytics) Ping(eventType string, additionalData map[string]stri
 		pairs = append(pairs, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	logger.Info.Printf("(offline analytics) %s %s", eventType, pairs)
+	logger.Info.Printf("(offline analytics) [%s] %s %s", o.runID, eventType, pairs)
 }
 
 func (o *OfflineAnalytics) CheckConnection() error {

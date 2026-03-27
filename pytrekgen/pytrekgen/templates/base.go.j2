@@ -224,6 +224,8 @@ func main() {
 
 {% if config.analytics.offline %}
 	tracker = analytics.NewOfflineAnalytics(analytics.Config{
+		Version: gitTag,
+		SHA:     gitSHA,
 		CommonData: map[string]string{
 {% for key, env_var in config.analytics.common_data.items() %}
 			"{{ key }}": os.Getenv("{{ env_var | prefixed_env(config.env_prefix) }}"),
@@ -237,6 +239,8 @@ func main() {
 		HealthURL: os.Getenv("{{ config.analytics.health_url_env | prefixed_env(config.env_prefix) }}"),
 {% endif %}
 		SkipTLS: {{ "true" if config.analytics.skip_tls else "false" }},
+		Version: gitTag,
+		SHA:     gitSHA,
 		CommonData: map[string]string{
 {% for key, env_var in config.analytics.common_data.items() %}
 			"{{ key }}": os.Getenv("{{ env_var | prefixed_env(config.env_prefix) }}"),
@@ -257,6 +261,8 @@ func main() {
 {% endif %}
 
 	// LET'S GOOOOOOO
+	logger.Info.Printf("Version (Checker SHA): %s", gitSHA)
+	logger.Info.Printf("RunID: %s", tracker.RunID())
 	tracker.PingStart()
 {% if config.optional_env %}
 	// Get optional string environment variables with defaults

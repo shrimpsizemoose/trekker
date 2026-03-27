@@ -10,6 +10,8 @@ from pytrekgen.generator import Generator
 
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
+TREKKER_ROOT = Path(__file__).parent.parent.parent
+TREKKER_REPLACE = {"github.com/shrimpsizemoose/trekker": str(TREKKER_ROOT)}
 
 
 @pytest.fixture
@@ -99,7 +101,7 @@ class TestGeneratedCodeCompiles:
         # Generate go.mod if we have module info
         if config.build.module:
             gomod = tmp_path / "go.mod"
-            gomod.write_text(generator.generate_gomod(config))
+            gomod.write_text(generator.generate_gomod(config, replace=TREKKER_REPLACE))
 
             # Run go mod tidy
             result = subprocess.run(
@@ -130,7 +132,7 @@ class TestGeneratedCodeCompiles:
         go_file.write_text(code)
 
         gomod = tmp_path / "go.mod"
-        gomod.write_text(generator.generate_gomod(config))
+        gomod.write_text(generator.generate_gomod(config, replace=TREKKER_REPLACE))
 
         # go mod tidy
         result = subprocess.run(
@@ -169,7 +171,7 @@ class TestGoVet:
 
         if config.build.module:
             gomod = tmp_path / "go.mod"
-            gomod.write_text(generator.generate_gomod(config))
+            gomod.write_text(generator.generate_gomod(config, replace=TREKKER_REPLACE))
 
             # Need to run go mod tidy first for vet to work
             subprocess.run(
