@@ -2,7 +2,6 @@ package analytics
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/shrimpsizemoose/trekker/logger"
+	"github.com/shrimpsizemoose/trekker/utils"
 )
 
 type Tracker interface {
@@ -40,11 +40,11 @@ type Analytics struct {
 }
 
 func generateRunID() string {
-	b := make([]byte, 5)
-	if _, err := rand.Read(b); err != nil {
+	id, err := utils.NewNanoIDSize(10)
+	if err != nil {
 		return fmt.Sprintf("trkkr-%d", time.Now().UnixNano())
 	}
-	return fmt.Sprintf("trkkr-%x", b)
+	return "trkkr-" + id
 }
 
 func NewAnalytics(config Config) Tracker {
