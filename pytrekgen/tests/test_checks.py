@@ -494,6 +494,113 @@ class TestPostgresTablesEmptyCheck:
         assert "func checkPostgresTablesEmpty(" in code
 
 
+def _kafka_compare_check(**overrides):
+    """Build a minimal kafka_compare check dict with optional overrides."""
+    base = {
+        "type": "kafka_compare",
+        "kafka_addr_env": "LAB03_KAFKA",
+        "send_topic_env": "TOPIC_IN",
+        "send_file_jsonl": "input.jsonl",
+        "receive_topic_env": "TOPIC_OUT",
+        "receive_expected_file_jsonl": "expected.jsonl",
+        "match_by": ["start_ts", "end_ts"],
+        "compare": ["revenue", "visitors"],
+    }
+    base.update(overrides)
+    return base
+
+
+def _kafka_compare_code(generator, **overrides):
+    config = minimal_config(checks=[_kafka_compare_check(**overrides)])
+    return generator.generate(config)
+
+
+def test_kafka_compare_generates_helper_function(generator):
+    code = _kafka_compare_code(generator)
+    assert "func kafkaCompare(" in code
+
+
+def test_kafka_compare_generates_check_call(generator):
+    code = _kafka_compare_code(generator)
+    assert "kafkaCompare(" in code
+    assert "rootCtx" in code
+
+
+def test_kafka_compare_uses_env_prefix(generator):
+    code = _kafka_compare_code(generator)
+    assert 'os.Getenv("TEST_LAB03_KAFKA")' in code
+    assert 'os.Getenv("TEST_TOPIC_IN")' in code
+    assert 'os.Getenv("TEST_TOPIC_OUT")' in code
+
+
+def test_kafka_compare_match_by_fields(generator):
+    code = _kafka_compare_code(generator)
+    assert '"start_ts"' in code
+    assert '"end_ts"' in code
+
+
+def test_kafka_compare_compare_fields(generator):
+    code = _kafka_compare_code(generator)
+    assert '"revenue"' in code
+    assert '"visitors"' in code
+
+
+def test_kafka_compare_float_tolerance(generator):
+    code = _kafka_compare_code(generator, float_tolerance=0.01)
+    assert "0.01" in code
+
+
+def test_kafka_compare_message_before(generator):
+    code = _kafka_compare_code(generator, message_before="Отправляю данные...")
+    assert "Отправляю данные..." in code
+
+
+def test_kafka_compare_message_success(generator):
+    code = _kafka_compare_code(generator, message_success="Все совпало!")
+    assert "Все совпало!" in code
+    assert "logger.Victory" in code
+
+
+def test_kafka_compare_failure_event(generator):
+    code = _kafka_compare_code(
+        generator,
+        on_failure={"event": "compare_failed", "message": "Не совпало"},
+    )
+    assert '"compare_failed"' in code
+    assert "Не совпало" in code
+
+
+def test_kafka_compare_success_event(generator):
+    code = _kafka_compare_code(generator, on_success={"event": "compare_ok"})
+    assert 'tracker.Ping("compare_ok"' in code
+
+
+def test_kafka_compare_embedded_data_references(generator):
+    code = _kafka_compare_code(generator)
+    assert "inputData" in code
+    assert "expectedData" in code
+
+
+def test_kafka_compare_wait_and_timeout(generator):
+    code = _kafka_compare_code(
+        generator,
+        receive_wait_before_seconds=15,
+        receive_timeout_seconds=60,
+    )
+    assert "15 * time.Second" in code
+    assert "60 * time.Second" in code
+
+
+def test_kafka_compare_build_key_helper(generator):
+    code = _kafka_compare_code(generator)
+    assert "func kafkaCompareBuildKey(" in code
+
+
+def test_kafka_compare_to_float_helper(generator):
+    code = _kafka_compare_code(generator)
+    assert "func kafkaCompareToFloat(" in code
+
+
 class TestCustomCheck:
     """Tests for custom check generation."""
 

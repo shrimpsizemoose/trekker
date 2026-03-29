@@ -4,7 +4,7 @@
 package main
 
 import (
-{% if config.has_http_batch_checks %}
+{% if config.embedded_data or config.has_http_batch_checks %}
 	_ "embed"
 {% endif %}
 {% for imp in config.required_stdlib_imports | sort %}

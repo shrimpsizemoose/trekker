@@ -1,0 +1,29 @@
+{% if check.message_before %}
+	logger.Info.Println("{{ check.message_before }}")
+{% endif %}
+	if err := kafkaCompare(
+		rootCtx,
+		os.Getenv("{{ check.kafka_addr_env | prefixed_env(config.env_prefix) }}"),
+		os.Getenv("{{ check.send_topic_env | prefixed_env(config.env_prefix) }}"),
+		{{ check.send_file_jsonl | replace('.jsonl', '') }}Data,
+		os.Getenv("{{ check.receive_topic_env | prefixed_env(config.env_prefix) }}"),
+		{{ check.receive_expected_file_jsonl | replace('.jsonl', '') }}Data,
+		{{ check.receive_wait_before_seconds }} * time.Second,
+		{{ check.receive_timeout_seconds }} * time.Second,
+		[]string{ {{ check.match_by | map('quote') | join(', ') }} },
+		[]string{ {{ check.compare | map('quote') | join(', ') }} },
+		{{ check.float_tolerance }},
+	); err != nil {
+{% if check.on_failure.event %}
+		tracker.Ping("{{ check.on_failure.event }}", nil)
+		logger.Error.Fatalf("{{ check.on_failure.message }}: %v", err)
+{% else %}
+		logger.Error.Fatal(err)
+{% endif %}
+	}
+{% if check.message_success %}
+	logger.Victory.Println("{{ check.message_success }}")
+{% endif %}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}

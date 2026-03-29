@@ -27,6 +27,7 @@ from pytrekgen.config import (
     KafkaTopicExistsCheck,
     KafkaRoundtripCheck,
     KafkaSendFileCheck,
+    KafkaCompareCheck,
     PostgresConnectCheck,
     PostgresTablesEmptyCheck,
     CustomCheck,
@@ -226,6 +227,21 @@ class TestCheckTypes:
         )
         assert check.type == "kafka_send_file"
 
+    def test_kafka_compare_check(self):
+        check = KafkaCompareCheck(
+            kafka_addr_env="KAFKA",
+            send_topic_env="TOPIC_IN",
+            send_file_jsonl="input.jsonl",
+            receive_topic_env="TOPIC_OUT",
+            receive_expected_file_jsonl="expected.jsonl",
+            match_by=["start_ts", "end_ts"],
+            compare=["revenue", "visitors"],
+        )
+        assert check.type == "kafka_compare"
+        assert check.float_tolerance == 0.0001
+        assert check.receive_wait_before_seconds == 0
+        assert check.receive_timeout_seconds == 120
+
     def test_postgres_connect_check(self):
         check = PostgresConnectCheck(postgres_url_env="DB_URL")
         assert check.type == "postgres_connect"
@@ -272,6 +288,23 @@ class TestCheckTypeDiscriminator:
         )
         assert isinstance(config.checks[0], KafkaRoundtripCheck)
 
+    def test_kafka_compare_parsed(self):
+        config = minimal_config(
+            checks=[
+                {
+                    "type": "kafka_compare",
+                    "kafka_addr_env": "K",
+                    "send_topic_env": "TI",
+                    "send_file_jsonl": "input.jsonl",
+                    "receive_topic_env": "TO",
+                    "receive_expected_file_jsonl": "expected.jsonl",
+                    "match_by": ["ts"],
+                    "compare": ["val"],
+                }
+            ]
+        )
+        assert isinstance(config.checks[0], KafkaCompareCheck)
+
     def test_unknown_check_type_raises(self):
         with pytest.raises(ValidationError) as exc_info:
             minimal_config(checks=[{"type": "nonexistent_check", "foo": "bar"}])
@@ -305,6 +338,14 @@ class TestCheckRequiredFields:
     def test_kafka_roundtrip_requires_addr(self):
         with pytest.raises(ValidationError):
             KafkaRoundtripCheck(kafka_topic_env="T")
+
+    def test_kafka_compare_requires_fields(self):
+        with pytest.raises(ValidationError):
+            KafkaCompareCheck(
+                kafka_addr_env="K",
+                send_topic_env="TI",
+                # missing send_file_jsonl, receive fields, match_by, compare
+            )
 
     def test_postgres_connect_requires_url(self):
         with pytest.raises(ValidationError):
@@ -341,6 +382,28 @@ class TestLabConfigProperties:
             ]
         )
         assert config.has_kafka_checks is True
+
+    def test_has_kafka_checks_with_compare(self):
+        config = minimal_config(
+            checks=[
+                {
+                    "type": "kafka_compare",
+                    "kafka_addr_env": "K",
+                    "send_topic_env": "TI",
+                    "send_file_jsonl": "in.jsonl",
+                    "receive_topic_env": "TO",
+                    "receive_expected_file_jsonl": "exp.jsonl",
+                    "match_by": ["ts"],
+                    "compare": ["val"],
+                }
+            ]
+        )
+        assert config.has_kafka_checks is True
+        assert config.has_kafka_compare_checks is True
+
+    def test_has_kafka_compare_checks_false(self):
+        config = minimal_config(checks=[])
+        assert config.has_kafka_compare_checks is False
 
     def test_has_postgres_checks_true(self):
         config = minimal_config(
@@ -539,6 +602,26 @@ def test_helper_templates_custom_and_wait_have_none():
         ]
     )
     assert config.required_helper_templates == []
+
+
+def test_helper_templates_kafka_compare():
+    config = minimal_config(
+        checks=[
+            {
+                "type": "kafka_compare",
+                "kafka_addr_env": "K",
+                "send_topic_env": "TI",
+                "send_file_jsonl": "in.jsonl",
+                "receive_topic_env": "TO",
+                "receive_expected_file_jsonl": "exp.jsonl",
+                "match_by": ["ts"],
+                "compare": ["val"],
+            }
+        ]
+    )
+    assert config.required_helper_templates == [
+        "checks/kafka_compare_helpers.go.j2"
+    ]
 
 
 def test_helper_templates_multiple_kafka_types():

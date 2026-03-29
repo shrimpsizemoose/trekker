@@ -24,6 +24,7 @@ CHECK_TYPE_HELPERS: dict[str, list[str]] = {
     "kafka_topic_exists": ["checks/kafka_topic_exists_helpers.go.j2"],
     "kafka_roundtrip": ["checks/kafka_roundtrip_helpers.go.j2"],
     "kafka_send_file": [],
+    "kafka_compare": ["checks/kafka_compare_helpers.go.j2"],
     "postgres_tables_empty": ["checks/postgres_tables_empty_helpers.go.j2"],
     "clickhouse_query_simple": ["checks/clickhouse_query_simple_helpers.go.j2"],
 }
@@ -41,6 +42,10 @@ CHECK_TYPE_STDLIB_IMPORTS: dict[str, set[str]] = {
     "kafka_topic_exists": {"context", "os/signal", "time"},
     "kafka_roundtrip": {"context", "os/signal", "time"},
     "kafka_send_file": {"context", "os/signal", "bufio", "time"},
+    "kafka_compare": {
+        "context", "os/signal", "encoding/json", "fmt", "math",
+        "os", "bufio", "strings", "time", "bytes",
+    },
     "postgres_connect": {"context", "os/signal", "database/sql"},
     "postgres_tables_empty": {"context", "os/signal", "database/sql"},
     "custom": {"context", "os/signal"},
@@ -405,6 +410,55 @@ class KafkaSendFileCheck(BaseCheck):
     file: str = Field(description="Path to file containing messages to send")
 
 
+class KafkaCompareCheck(BaseCheck):
+    """Send JSONL to a Kafka input topic, read from output topic, compare messages."""
+
+    type: Literal["kafka_compare"] = "kafka_compare"
+    kafka_addr_env: str = Field(
+        description="Environment variable name containing Kafka address (host:port)"
+    )
+
+    # Send phase
+    send_topic_env: str = Field(
+        description="Environment variable name containing input topic name"
+    )
+    send_file_jsonl: str = Field(
+        description="JSONL file to send (must match an embedded_data entry)"
+    )
+
+    # Receive phase
+    receive_topic_env: str = Field(
+        description="Environment variable name containing output topic name"
+    )
+    receive_expected_file_jsonl: str = Field(
+        description="JSONL file with expected messages (must match an embedded_data entry)"
+    )
+    receive_wait_before_seconds: int = Field(
+        default=0, description="Seconds to wait before reading output topic"
+    )
+    receive_timeout_seconds: int = Field(
+        default=120, description="Timeout in seconds for reading all expected messages"
+    )
+
+    # Comparison
+    match_by: list[str] = Field(
+        description="Fields forming the composite key for matching messages"
+    )
+    compare: list[str] = Field(
+        description="Fields to compare between expected and received messages"
+    )
+    float_tolerance: float = Field(
+        default=0.0001, description="Maximum allowed difference for float comparisons"
+    )
+
+    message_before: str = Field(
+        default="", description="Message to display before starting"
+    )
+    message_success: str = Field(
+        default="", description="Message to display on success"
+    )
+
+
 # --- Postgres Checks ---
 
 
@@ -512,6 +566,7 @@ Check = Annotated[
     | KafkaTopicExistsCheck
     | KafkaRoundtripCheck
     | KafkaSendFileCheck
+    | KafkaCompareCheck
     | PostgresConnectCheck
     | PostgresTablesEmptyCheck
     | ClickhouseQuerySimpleCheck
@@ -577,13 +632,23 @@ class LabConfig(BaseModel):
     @property
     def has_kafka_checks(self) -> bool:
         return any(
-            c.type in ("kafka_topic_exists", "kafka_roundtrip", "kafka_send_file")
+            c.type
+            in (
+                "kafka_topic_exists",
+                "kafka_roundtrip",
+                "kafka_send_file",
+                "kafka_compare",
+            )
             for c in self.checks
         )
 
     @property
     def has_kafka_send_file_checks(self) -> bool:
         return any(c.type == "kafka_send_file" for c in self.checks)
+
+    @property
+    def has_kafka_compare_checks(self) -> bool:
+        return any(c.type == "kafka_compare" for c in self.checks)
 
     @property
     def has_postgres_checks(self) -> bool:
