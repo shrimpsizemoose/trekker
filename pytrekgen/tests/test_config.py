@@ -165,6 +165,31 @@ class TestBuildConfig:
         assert build.go_version == "1.22"
 
 
+def test_description_defaults_to_empty():
+    check = ParamEqualsCheck(env_var="X", expected="y")
+    assert check.description == ""
+
+
+def test_description_is_set():
+    check = ParamEqualsCheck(
+        env_var="X", expected="y", description="Проверяет режим"
+    )
+    assert check.description == "Проверяет режим"
+
+
+def test_description_parsed_from_dict():
+    config = minimal_config(
+        checks=[
+            {
+                "type": "http_get",
+                "url": "http://localhost",
+                "description": "Проверяет health endpoint",
+            }
+        ]
+    )
+    assert config.checks[0].description == "Проверяет health endpoint"
+
+
 class TestCheckTypes:
     """Tests for individual check type models."""
 

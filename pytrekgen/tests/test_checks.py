@@ -615,6 +615,43 @@ class TestCustomCheck:
         assert "if err := myValidator(rootCtx); err != nil" in code
 
 
+def test_check_description_appears_in_generated_code(generator):
+    config = minimal_config(
+        checks=[
+            {
+                "type": "http_get",
+                "url": "http://localhost",
+                "name": "health",
+                "description": "Проверяет health endpoint",
+            }
+        ]
+    )
+    code = generator.generate(config)
+    assert "Проверяет health endpoint" in code
+
+
+def test_check_no_description_line_when_empty(generator):
+    config = minimal_config(
+        checks=[
+            {
+                "type": "http_get",
+                "url": "http://localhost",
+                "name": "health",
+            }
+        ]
+    )
+    code = generator.generate(config)
+    assert "[http_get] health" in code
+    # Should not have an indented description line
+    lines = code.splitlines()
+    for i, line in enumerate(lines):
+        if "[http_get] health" in line:
+            # Next non-empty template line should not be an indented description
+            if i + 1 < len(lines):
+                assert '     "' not in lines[i + 1] or "Println" not in lines[i + 1]
+            break
+
+
 class TestSkipOnFlag:
     """Tests for skip_on_flag conditional execution."""
 

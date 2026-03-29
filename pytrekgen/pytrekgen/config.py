@@ -165,6 +165,10 @@ class BaseCheck(BaseModel):
         default="",
         description="Optional identifier for this check, used in logs and analytics",
     )
+    description: str = Field(
+        default="",
+        description="Brief text explaining what the check does, shown in --checks output",
+    )
     skip_on_flag: str = Field(
         default="",
         description="Skip this check if the specified command-line flag is set",

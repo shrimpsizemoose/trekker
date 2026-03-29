@@ -184,7 +184,12 @@ func main() {
 		fmt.Println("Проверки для Lab {{ lab.id }} ({{ lab.name }}):")
 {% for check in config.checks %}
 {% if check.name %}
+{% if check.description %}
 		fmt.Println("  {{ loop.index }}. [{{ check.type }}] {{ check.name }}")
+		fmt.Println("     {{ check.description }}")
+{% else %}
+		fmt.Println("  {{ loop.index }}. [{{ check.type }}] {{ check.name }}")
+{% endif %}
 {% else %}
 		fmt.Println("  {{ loop.index }}. [{{ check.type }}]")
 {% endif %}
