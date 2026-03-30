@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # -----------------------------------------------------------------------------
 # Import Registry
@@ -161,6 +161,8 @@ class BuildConfig(BaseModel):
 class BaseCheck(BaseModel):
     """Common fields for all check types."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str = Field(
         default="",
         description="Optional identifier for this check, used in logs and analytics",
@@ -172,6 +174,11 @@ class BaseCheck(BaseModel):
     skip_on_flag: str = Field(
         default="",
         description="Skip this check if the specified command-line flag is set",
+    )
+    branch_only: bool = Field(
+        default=False,
+        alias="_branch_only",
+        description="If true, skipped in main loop — only executed via branch_flag",
     )
     on_failure: FailureAction = Field(
         default_factory=FailureAction, description="Action to take when check fails"
@@ -554,6 +561,25 @@ class CustomCheck(BaseCheck):
     )
 
 
+# --- Branch Check ---
+
+
+class BranchFlagCheck(BaseCheck):
+    """Conditional execution based on a bool flag."""
+
+    type: Literal["branch_flag"] = "branch_flag"
+    flag: str = Field(description="Name of a bool flag from flags: section")
+    if_set: str = Field(
+        default="", description="Check name to execute when flag is true"
+    )
+    if_not_set: str = Field(
+        default="", description="Check name to execute when flag is false"
+    )
+    next: str = Field(
+        default="", alias="_next", description="Check where branches rejoin (visualization)"
+    )
+
+
 # -----------------------------------------------------------------------------
 # Discriminated Union
 # -----------------------------------------------------------------------------
@@ -574,7 +600,8 @@ Check = Annotated[
     | PostgresConnectCheck
     | PostgresTablesEmptyCheck
     | ClickhouseQuerySimpleCheck
-    | CustomCheck,
+    | CustomCheck
+    | BranchFlagCheck,
     Field(discriminator="type"),
 ]
 
@@ -769,3 +796,52 @@ class LabConfig(BaseModel):
         """Custom imports minus auto-generated ones."""
         excluded = self.required_stdlib_imports | self.auto_third_party_imports
         return [imp for imp in self.custom_code.imports if imp not in excluded]
+
+    def get_check_by_name(self, name: str) -> Check:
+        """Find a check by its name field."""
+        for check in self.checks:
+            if check.name == name:
+                return check
+        raise ValueError(f"check '{name}' not found")
+
+    @model_validator(mode="after")
+    def validate_branch_flags(self) -> "LabConfig":
+        """Validate branch_flag checks: references, flags, cycles."""
+        flag_names = {f.name for f in self.flags}
+        check_names = {c.name for c in self.checks if c.name}
+
+        for check in self.checks:
+            if check.type != "branch_flag":
+                continue
+
+            # flag must exist
+            if check.flag not in flag_names:
+                raise ValueError(
+                    f"branch_flag '{check.name}': flag '{check.flag}' "
+                    f"not found in flags list"
+                )
+
+            # if_set / if_not_set must reference existing check names
+            for attr in ("if_set", "if_not_set"):
+                target_name = getattr(check, attr)
+                if not target_name:
+                    continue
+                if target_name not in check_names:
+                    raise ValueError(
+                        f"branch_flag '{check.name}': {attr} references "
+                        f"unknown check '{target_name}'"
+                    )
+                target = self.get_check_by_name(target_name)
+                if not getattr(target, "branch_only", False):
+                    raise ValueError(
+                        f"branch_flag '{check.name}': {attr} target "
+                        f"'{target_name}' must have _branch_only: true"
+                    )
+                # no circular: target can't be another branch_flag
+                if target.type == "branch_flag":
+                    raise ValueError(
+                        f"branch_flag '{check.name}': {attr} target "
+                        f"'{target_name}' cannot be another branch_flag"
+                    )
+
+        return self

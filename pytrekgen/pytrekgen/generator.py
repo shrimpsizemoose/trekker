@@ -124,6 +124,13 @@ class Generator:
                 if config and config.custom_code and config.custom_code.code_file:
                     detail += f" [{config.custom_code.code_file}]"
                 return detail
+            case "branch_flag":
+                parts = [f"flag: -{check.flag}"]
+                if check.if_set:
+                    parts.append(f"yes → {check.if_set}")
+                if check.if_not_set:
+                    parts.append(f"no → {check.if_not_set}")
+                return ", ".join(parts)
             case _:
                 return check.type
 
@@ -272,11 +279,35 @@ class Generator:
         success = "SUCCESS{{100_lab_finish}}"
         fail = "FAIL{Fail}"
 
+        visible_checks = [
+            c for c in config.checks
+            if not getattr(c, "branch_only", False)
+        ]
+
         lines = ["graph TD"]
         lines.append("    START{{000_lab_start}} --> C1")
 
-        for i, check in enumerate(config.checks, 1):
+        for i, check in enumerate(visible_checks, 1):
             name = check.name or "unnamed"
+            br = "<br/>"
+            type_label = cls._check_type_label(check, config)
+
+            if check.type == "branch_flag":
+                # Diamond decision node
+                flag_label = f"-{check.flag}?"
+                lines.append(f'    C{i}{{"{flag_label}"}}')
+                # yes/no branches
+                if check.if_set:
+                    lines.append(f'    C{i} -->|yes| C{i}_yes["{check.if_set}"]')
+                if check.if_not_set:
+                    lines.append(f'    C{i} -->|no| C{i}_no["{check.if_not_set}"]')
+                # convergence
+                next_node = f"C{i + 1}" if i < len(visible_checks) else success
+                if check.if_set:
+                    lines.append(f"    C{i}_yes --> {next_node}")
+                if check.if_not_set:
+                    lines.append(f"    C{i}_no --> {next_node}")
+                continue
 
             # Build events list for the label
             events = []
@@ -284,10 +315,6 @@ class Generator:
                 val = getattr(check, attr, None)
                 if val:
                     events.append(val)
-
-            br = "<br/>"
-
-            type_label = cls._check_type_label(check, config)
 
             if html_labels:
                 label = f'<b><span style="font-size:1.1em">{i}. {name}</span></b>{br}[{type_label}]'
@@ -303,12 +330,12 @@ class Generator:
             # Connections
             if check.on_success and check.on_success.event:
                 evt = f"<i>{check.on_success.event}</i>"
-                if i < len(config.checks):
+                if i < len(visible_checks):
                     lines.append(f'    C{i} -- "{evt}" --> C{i + 1}')
                 else:
                     lines.append(f'    C{i} -- "{evt}" --> ' + success)
             else:
-                if i < len(config.checks):
+                if i < len(visible_checks):
                     lines.append(f"    C{i} --> C{i + 1}")
                 else:
                     lines.append(f"    C{i} --> " + success)
@@ -361,7 +388,11 @@ class Generator:
         console.print("         ▼", style="dim")
 
         # --- Checks ---
-        for i, check in enumerate(config.checks, 1):
+        visible_checks = [
+            c for c in config.checks
+            if not getattr(c, "branch_only", False)
+        ]
+        for i, check in enumerate(visible_checks, 1):
             detail = cls._check_detail(check, config)
             name = check.name or "unnamed"
 
@@ -387,7 +418,7 @@ class Generator:
             title = f"{i}. [bold]{name}[/bold]  [dim]\\[{type_label}][/dim]"
             console.print(Panel(body, title=title, style="white"))
 
-            if i < len(config.checks):
+            if i < len(visible_checks):
                 console.print("         │", style="dim")
                 console.print("         ▼", style="dim")
 

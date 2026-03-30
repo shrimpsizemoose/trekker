@@ -182,16 +182,33 @@ func main() {
 
 	if *flagChecks {
 		fmt.Println("Проверки для Lab {{ lab.id }} ({{ lab.name }}):")
+{% set ns = namespace(idx=0) %}
 {% for check in config.checks %}
+{% if check.branch_only is defined and check.branch_only %}
+{% elif check.type == "branch_flag" %}
+{% set ns.idx = ns.idx + 1 %}
 {% if check.name %}
+		fmt.Println("  {{ ns.idx }}. [{{ check.type }}] {{ check.name }}")
 {% if check.description %}
-		fmt.Println("  {{ loop.index }}. [{{ check.type }}] {{ check.name }}")
 		fmt.Println("     {{ check.description }}")
+{% endif %}
+		fmt.Println("     ⚑ -{{ check.flag }} → {{ check.if_set }}")
+		fmt.Println("     ⚑ otherwise → {{ check.if_not_set }}")
 {% else %}
-		fmt.Println("  {{ loop.index }}. [{{ check.type }}] {{ check.name }}")
+		fmt.Println("  {{ ns.idx }}. [{{ check.type }}]")
 {% endif %}
 {% else %}
-		fmt.Println("  {{ loop.index }}. [{{ check.type }}]")
+{% set ns.idx = ns.idx + 1 %}
+{% if check.name %}
+{% if check.description %}
+		fmt.Println("  {{ ns.idx }}. [{{ check.type }}] {{ check.name }}")
+		fmt.Println("     {{ check.description }}")
+{% else %}
+		fmt.Println("  {{ ns.idx }}. [{{ check.type }}] {{ check.name }}")
+{% endif %}
+{% else %}
+		fmt.Println("  {{ ns.idx }}. [{{ check.type }}]")
+{% endif %}
 {% endif %}
 {% endfor %}
 		return
@@ -289,14 +306,16 @@ func main() {
 {% endif %}
 
 {% for check in config.checks %}
-{% if check.skip_on_flag %}
+{% if check.branch_only is defined and check.branch_only %}
+{% elif check.skip_on_flag %}
 	if !*flag{{ check.skip_on_flag | title_case }} {
-{% endif %}
 {% include "checks/" + check.type + ".go.j2" %}
-{% if check.skip_on_flag %}
 	}
-{% endif %}
 
+{% else %}
+{% include "checks/" + check.type + ".go.j2" %}
+
+{% endif %}
 {% endfor %}
 	logger.Info.Println("----------------------------------------")
 	logger.Victory.Println("{{ config.success_message }}")

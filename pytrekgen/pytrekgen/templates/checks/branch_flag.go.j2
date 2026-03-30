@@ -1,0 +1,15 @@
+	if *flag{{ check.flag | title_case }} {
+{% if check.if_set %}
+{% set target = config.get_check_by_name(check.if_set) %}
+{% with check = target %}
+{% include "checks/" + target.type + ".go.j2" %}
+{% endwith %}
+{% endif %}
+	} else {
+{% if check.if_not_set %}
+{% set target = config.get_check_by_name(check.if_not_set) %}
+{% with check = target %}
+{% include "checks/" + target.type + ".go.j2" %}
+{% endwith %}
+{% endif %}
+	}
