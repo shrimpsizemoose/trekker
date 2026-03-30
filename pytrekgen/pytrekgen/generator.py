@@ -142,6 +142,41 @@ class Generator:
         return check.type
 
     @staticmethod
+    def _extract_custom_events(config, func_name: str) -> list[str]:
+        """Extract tracker.Ping event names from a custom function's body."""
+        code = ""
+        if config and config.custom_code:
+            code = config.custom_code.code or ""
+
+        if not code or not func_name:
+            return []
+
+        # Find function body: func funcName(...) ... { ... }
+        # Use a simple brace-counting approach
+        pattern = rf'func\s+{re.escape(func_name)}\s*\('
+        match = re.search(pattern, code)
+        if not match:
+            return []
+
+        # Find opening brace
+        brace_pos = code.find("{", match.end())
+        if brace_pos == -1:
+            return []
+
+        # Count braces to find function end
+        depth = 1
+        pos = brace_pos + 1
+        while pos < len(code) and depth > 0:
+            if code[pos] == "{":
+                depth += 1
+            elif code[pos] == "}":
+                depth -= 1
+            pos += 1
+
+        body = code[brace_pos:pos]
+        return re.findall(r'tracker\.Ping\("([^"]+)"', body)
+
+    @staticmethod
     def _strip_build_constraints(content: str) -> str:
         """Strip Go build constraints from file content.
 
@@ -305,6 +340,12 @@ class Generator:
                 val = getattr(check, attr, None)
                 if val:
                     events.append(val)
+
+            # Extract tracker.Ping events from custom code
+            if check.type == "custom" and hasattr(check, "func"):
+                custom_events = cls._extract_custom_events(config, check.func)
+                events.extend(custom_events)
+
             if events:
                 styled = ", ".join(f"<i>{e}</i>" for e in events)
                 label += br + styled
@@ -433,12 +474,16 @@ class Generator:
             if getattr(check, "dead_end", False):
                 events.append(("⛔ ", "yellow", "dead end (no grade)"))
 
+            # Extract tracker.Ping events from custom code
+            if check.type == "custom" and hasattr(check, "func"):
+                for evt in cls._extract_custom_events(config, check.func):
+                    events.append(("📡 ", "dim", evt))
+
             if events:
-                body.append("\n")
                 for symbol, ev_style, text in events:
+                    body.append("\n")
                     body.append(symbol, style=ev_style)
                     body.append(text, style="dim")
-                    body.append("  ")
 
             type_label = cls._check_type_label(check, config)
             title = f"{number}. [bold]{name}[/bold]  [dim]\\[{type_label}][/dim]"
