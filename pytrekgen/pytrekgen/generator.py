@@ -276,73 +276,89 @@ class Generator:
             html_labels: Use HTML formatting in node labels (for embedded HTML pages).
 
         """
+        br = "<br/>"
         success = "SUCCESS{{100_lab_finish}}"
         fail = "FAIL{Fail}"
+
+        checks_by_name = {c.name: c for c in config.checks if c.name}
 
         visible_checks = [
             c for c in config.checks
             if not getattr(c, "branch_only", False)
         ]
 
-        lines = ["graph TD"]
-        lines.append("    START{{000_lab_start}} --> C1")
-
-        for i, check in enumerate(visible_checks, 1):
+        def build_node_label(check, number=None):
+            """Build mermaid node label for a check."""
             name = check.name or "unnamed"
-            br = "<br/>"
             type_label = cls._check_type_label(check, config)
 
-            if check.type == "branch_flag":
-                # Diamond decision node
-                flag_label = f"-{check.flag}?"
-                lines.append(f'    C{i}{{"{flag_label}"}}')
-                # yes/no branches
-                if check.if_set:
-                    lines.append(f'    C{i} -->|yes| C{i}_yes["{check.if_set}"]')
-                if check.if_not_set:
-                    lines.append(f'    C{i} -->|no| C{i}_no["{check.if_not_set}"]')
-                # convergence
-                next_node = f"C{i + 1}" if i < len(visible_checks) else success
-                if check.if_set:
-                    lines.append(f"    C{i}_yes --> {next_node}")
-                if check.if_not_set:
-                    lines.append(f"    C{i}_no --> {next_node}")
-                continue
+            if html_labels and number is not None:
+                label = f'<b><span style="font-size:1.1em">{number}. {name}</span></b>{br}[{type_label}]'
+            elif number is not None:
+                label = f"{number}. {name}{br}[{type_label}]"
+            else:
+                label = f"{name}{br}[{type_label}]"
 
-            # Build events list for the label
             events = []
             for attr in ("on_request", "on_connect", "on_start", "on_response", "on_partitions_read"):
                 val = getattr(check, attr, None)
                 if val:
                     events.append(val)
-
-            if html_labels:
-                label = f'<b><span style="font-size:1.1em">{i}. {name}</span></b>{br}[{type_label}]'
-            else:
-                label = f"{i}. {name}{br}[{type_label}]"
-
             if events:
                 styled = ", ".join(f"<i>{e}</i>" for e in events)
                 label += br + styled
 
-            lines.append(f'    C{i}["{label}"]')
+            return label
 
-            # Connections
+        def add_node_and_edges(lines, node_id, check, next_node, number=None):
+            """Add a check node with success/failure edges."""
+            label = build_node_label(check, number)
+            lines.append(f'    {node_id}["{label}"]')
+
             if check.on_success and check.on_success.event:
                 evt = f"<i>{check.on_success.event}</i>"
-                if i < len(visible_checks):
-                    lines.append(f'    C{i} -- "{evt}" --> C{i + 1}')
-                else:
-                    lines.append(f'    C{i} -- "{evt}" --> ' + success)
+                lines.append(f'    {node_id} -- "{evt}" --> {next_node}')
             else:
-                if i < len(visible_checks):
-                    lines.append(f"    C{i} --> C{i + 1}")
-                else:
-                    lines.append(f"    C{i} --> " + success)
+                lines.append(f"    {node_id} --> {next_node}")
 
             if check.on_failure and check.on_failure.event:
                 evt = f"<i>{check.on_failure.event}</i>"
-                lines.append(f'    C{i} -. "{evt}" .-> ' + fail)
+                lines.append(f'    {node_id} -. "{evt}" .-> {fail}')
+
+        lines = ["graph TD"]
+        lines.append("    START{{000_lab_start}} --> C1")
+
+        for i, check in enumerate(visible_checks, 1):
+            next_node = f"C{i + 1}" if i < len(visible_checks) else success
+
+            if check.type == "branch_flag":
+                flag_label = f"-{check.flag}?"
+                lines.append(f'    C{i}{{"{flag_label}"}}')
+
+                if check.if_set and check.if_set in checks_by_name:
+                    target = checks_by_name[check.if_set]
+                    add_node_and_edges(lines, f"C{i}_yes", target, next_node)
+                    lines.append(f'    C{i} -->|yes| C{i}_yes')
+                elif check.if_set:
+                    lines.append(f'    C{i} -->|yes| C{i}_yes["{check.if_set}"]')
+                    lines.append(f"    C{i}_yes --> {next_node}")
+
+                if check.if_not_set and check.if_not_set in checks_by_name:
+                    target = checks_by_name[check.if_not_set]
+                    add_node_and_edges(lines, f"C{i}_no", target, next_node)
+                    lines.append(f'    C{i} -->|no| C{i}_no')
+                elif check.if_not_set:
+                    lines.append(f'    C{i} -->|no| C{i}_no["{check.if_not_set}"]')
+                    lines.append(f"    C{i}_no --> {next_node}")
+
+                if not check.if_set:
+                    lines.append(f"    C{i} -->|yes| {next_node}")
+                if not check.if_not_set:
+                    lines.append(f"    C{i} -->|no| {next_node}")
+
+                continue
+
+            add_node_and_edges(lines, f"C{i}", check, next_node, number=i)
 
         lines.append("    classDef startEnd fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20")
         lines.append("    classDef fail fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c")

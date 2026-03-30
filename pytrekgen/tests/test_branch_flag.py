@@ -303,9 +303,14 @@ def test_mermaid_renders_diamond_for_branch():
     assert "verify_full" in mermaid
 
 
-def test_mermaid_skips_branch_only():
+def test_mermaid_skips_branch_only_as_top_level():
     gen = Generator()
     config = _branch_config()
     mermaid = gen.generate_mermaid(config)
-    # branch_only checks should not be regular nodes
-    assert "[wait]" not in mermaid
+    # branch_only checks should not appear as top-level numbered nodes (C2, C3)
+    # but should appear inside branch target nodes (C1_yes, C1_no)
+    assert "C2[" not in mermaid  # no top-level node for branch_only checks
+    assert "C1_yes" in mermaid   # branch target nodes exist
+    assert "C1_no" in mermaid
+    # branch targets should show their type label
+    assert "[wait]" in mermaid
