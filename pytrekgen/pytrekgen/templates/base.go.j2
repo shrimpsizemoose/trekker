@@ -192,8 +192,25 @@ func main() {
 {% if check.description %}
 		fmt.Println("     {{ check.description }}")
 {% endif %}
-		fmt.Println("     ⚑ -{{ check.flag }} → {{ check.if_set }}")
-		fmt.Println("     ⚑ otherwise → {{ check.if_not_set }}")
+{% set target_yes = config.get_check_by_name(check.if_set) if check.if_set else none %}
+{% set target_no = config.get_check_by_name(check.if_not_set) if check.if_not_set else none %}
+{% if target_yes %}
+		fmt.Println("     ⚑ -{{ check.flag }}:")
+		fmt.Println("       → [{{ target_yes.type }}] {{ check.if_set }}")
+{% if target_yes.description %}
+		fmt.Println("         {{ target_yes.description }}")
+{% endif %}
+{% if target_yes.dead_end %}
+		fmt.Println("         ⛔ dead end (no grade)")
+{% endif %}
+{% endif %}
+{% if target_no %}
+		fmt.Println("     ⚑ otherwise:")
+		fmt.Println("       → [{{ target_no.type }}] {{ check.if_not_set }}")
+{% if target_no.description %}
+		fmt.Println("         {{ target_no.description }}")
+{% endif %}
+{% endif %}
 {% else %}
 		fmt.Println("  {{ ns.idx }}. [{{ check.type }}]")
 {% endif %}

@@ -4,6 +4,9 @@
 {% with check = target %}
 {% include "checks/" + target.type + ".go.j2" %}
 {% endwith %}
+{% if target.dead_end %}
+		return
+{% endif %}
 {% endif %}
 	} else {
 {% if check.if_not_set %}
@@ -11,5 +14,8 @@
 {% with check = target %}
 {% include "checks/" + target.type + ".go.j2" %}
 {% endwith %}
+{% if target.dead_end %}
+		return
+{% endif %}
 {% endif %}
 	}

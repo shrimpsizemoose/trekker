@@ -180,6 +180,10 @@ class BaseCheck(BaseModel):
         alias="_branch_only",
         description="If true, skipped in main loop — only executed via branch_flag",
     )
+    dead_end: bool = Field(
+        default=False,
+        description="If true, this check terminates the flow (no next step, no PingFinish)",
+    )
     on_failure: FailureAction = Field(
         default_factory=FailureAction, description="Action to take when check fails"
     )

@@ -279,6 +279,7 @@ class Generator:
         br = "<br/>"
         success = "SUCCESS{{100_lab_finish}}"
         fail = "FAIL{Fail}"
+        dead_end_node = 'DEAD_END([" Done (no grade)"])'
 
         checks_by_name = {c.name: c for c in config.checks if c.name}
 
@@ -315,11 +316,13 @@ class Generator:
             label = build_node_label(check, number)
             lines.append(f'    {node_id}["{label}"]')
 
+            target = dead_end_node if getattr(check, "dead_end", False) else next_node
+
             if check.on_success and check.on_success.event:
                 evt = f"<i>{check.on_success.event}</i>"
-                lines.append(f'    {node_id} -- "{evt}" --> {next_node}')
+                lines.append(f'    {node_id} -- "{evt}" --> {target}')
             else:
-                lines.append(f"    {node_id} --> {next_node}")
+                lines.append(f"    {node_id} --> {target}")
 
             if check.on_failure and check.on_failure.event:
                 evt = f"<i>{check.on_failure.event}</i>"
@@ -362,8 +365,10 @@ class Generator:
 
         lines.append("    classDef startEnd fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20")
         lines.append("    classDef fail fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c")
+        lines.append("    classDef deadEnd fill:#fff3cd,stroke:#664d03,stroke-width:2px,color:#664d03")
         lines.append("    class START,SUCCESS startEnd")
         lines.append("    class FAIL fail")
+        lines.append("    class DEAD_END deadEnd")
 
         return "\n".join(lines)
 
@@ -404,11 +409,14 @@ class Generator:
         console.print("         ▼", style="dim")
 
         # --- Checks ---
+        checks_by_name = {c.name: c for c in config.checks if c.name}
         visible_checks = [
             c for c in config.checks
             if not getattr(c, "branch_only", False)
         ]
-        for i, check in enumerate(visible_checks, 1):
+
+        def render_check_panel(check, number, style="white"):
+            """Render a single check as a Panel."""
             detail = cls._check_detail(check, config)
             name = check.name or "unnamed"
 
@@ -422,17 +430,45 @@ class Generator:
                 events.append(("✗ ", "red", check.on_failure.event))
             if check.skip_on_flag:
                 events.append(("⊘ ", "yellow", f"skip if --{check.skip_on_flag}"))
+            if getattr(check, "dead_end", False):
+                events.append(("⛔ ", "yellow", "dead end (no grade)"))
 
             if events:
                 body.append("\n")
-                for symbol, style, text in events:
-                    body.append(symbol, style=style)
+                for symbol, ev_style, text in events:
+                    body.append(symbol, style=ev_style)
                     body.append(text, style="dim")
                     body.append("  ")
 
             type_label = cls._check_type_label(check, config)
-            title = f"{i}. [bold]{name}[/bold]  [dim]\\[{type_label}][/dim]"
-            console.print(Panel(body, title=title, style="white"))
+            title = f"{number}. [bold]{name}[/bold]  [dim]\\[{type_label}][/dim]"
+            return Panel(body, title=title, style=style)
+
+        for i, check in enumerate(visible_checks, 1):
+            if check.type == "branch_flag":
+                # Render branch as a panel with both paths
+                name = check.name or "unnamed"
+                body = Text()
+                body.append(f"⚑ flag: --{check.flag}\n")
+
+                if check.if_set and check.if_set in checks_by_name:
+                    target = checks_by_name[check.if_set]
+                    de = " ⛔" if getattr(target, "dead_end", False) else ""
+                    body.append(f"  yes → {check.if_set} [{target.type}]{de}\n", style="green")
+                elif check.if_set:
+                    body.append(f"  yes → {check.if_set}\n", style="green")
+
+                if check.if_not_set and check.if_not_set in checks_by_name:
+                    target = checks_by_name[check.if_not_set]
+                    de = " ⛔" if getattr(target, "dead_end", False) else ""
+                    body.append(f"  no  → {check.if_not_set} [{target.type}]{de}", style="blue")
+                elif check.if_not_set:
+                    body.append(f"  no  → {check.if_not_set}", style="blue")
+
+                title = f"{i}. [bold]{name}[/bold]  [dim]\\[branch_flag][/dim]"
+                console.print(Panel(body, title=title, style="yellow"))
+            else:
+                console.print(render_check_panel(check, i))
 
             if i < len(visible_checks):
                 console.print("         │", style="dim")
