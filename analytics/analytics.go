@@ -107,19 +107,24 @@ func (a *Analytics) sendEvent(eventType string, additionalData map[string]string
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+
 	var respBody string
-	if a.verbose {
-		body, _ := io.ReadAll(resp.Body)
-		var parsed map[string]interface{}
-		if err := json.Unmarshal(body, &parsed); err == nil {
+	var serverError string
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(body, &parsed); err == nil {
+		if errMsg, ok := parsed["error"]; ok {
+			serverError = fmt.Sprintf("%v", errMsg)
+		}
+		if a.verbose {
 			var parts []string
 			for k, v := range parsed {
 				parts = append(parts, fmt.Sprintf("%s: %v", k, v))
 			}
 			respBody = strings.Join(parts, ", ")
-		} else {
-			respBody = string(body)
 		}
+	} else {
+		respBody = string(body)
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -127,6 +132,12 @@ func (a *Analytics) sendEvent(eventType string, additionalData map[string]string
 			logger.Error.Printf("Ответ сервера:\n  %s", respBody)
 		}
 		return fmt.Errorf("Неправильное сочетание студента-токена, перепроверь что всё вводишь правильно. Ожидал статус 200 OK, получил - %s", resp.Status)
+	}
+	if resp.StatusCode == http.StatusLocked {
+		if serverError != "" {
+			return fmt.Errorf("🔒 %s", serverError)
+		}
+		return fmt.Errorf("🔒 Эта версия чекера устарела. Скачай свежий образ и попробуй снова.")
 	}
 	if resp.StatusCode != http.StatusOK {
 		if a.verbose {
