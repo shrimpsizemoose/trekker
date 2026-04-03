@@ -114,7 +114,9 @@ class Generator:
             case "postgres_connect":
                 return f"connect ${{{check.postgres_url_env}}}"
             case "postgres_tables_empty":
-                return f"tables empty: {', '.join(check.tables)}"
+                parts = list(check.tables)
+                parts += [f"${{{e}}}" for e in check.tables_from_env]
+                return f"tables empty: {', '.join(parts)}"
             case "clickhouse_query_simple":
                 if check.expected:
                     return f"query: {check.query} → {check.expected!r}"

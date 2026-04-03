@@ -499,6 +499,10 @@ class PostgresTablesEmptyCheck(BaseCheck):
     tables: list[str] = Field(
         default_factory=list, description="List of table names that should be empty"
     )
+    tables_from_env: list[str] = Field(
+        default_factory=list,
+        description="List of env var names whose values are table names to check",
+    )
     message_before: str = Field(
         default="", description="Message before checking tables"
     )
