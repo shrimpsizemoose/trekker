@@ -63,17 +63,23 @@ func kafkaCompare(
 	})
 	defer reader.Close()
 
+	// Collect last value per key (update mode emits partial results first)
+	receivedMap := make(map[string]map[string]interface{})
 	deadline := time.Now().Add(timeout)
-	matched := 0
+	lastMsg := time.Now()
 
-	for time.Now().Before(deadline) && remaining > 0 {
+	for time.Now().Before(deadline) {
 		readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		msg, err := reader.ReadMessage(readCtx)
 		cancel()
 
 		if err != nil {
+			if len(receivedMap) >= len(expectedMap) && time.Since(lastMsg) > 10*time.Second {
+				break
+			}
 			continue
 		}
+		lastMsg = time.Now()
 
 		var received map[string]interface{}
 		if err := json.Unmarshal(msg, &received); err != nil {
@@ -81,12 +87,32 @@ func kafkaCompare(
 		}
 
 		key := kafkaCompareBuildKey(received, matchBy)
-		expected, ok := expectedMap[key]
-		if !ok {
-			continue
+		if _, ok := expectedMap[key]; ok {
+			receivedMap[key] = received
 		}
+	}
 
-		// Compare fields
+	// Check missing
+	var missing []string
+	for key := range expectedMap {
+		if _, ok := receivedMap[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		limit := len(missing)
+		if limit > 5 {
+			limit = 5
+		}
+		return fmt.Errorf(
+			"не получил %d из %d ожидаемых сообщений (таймаут %s). Отсутствуют: %v",
+			len(missing), len(expectedMap), timeout, missing[:limit],
+		)
+	}
+
+	// Compare last received value per key
+	for key, expected := range expectedMap {
+		received := receivedMap[key]
 		for _, field := range compareFields {
 			expVal := kafkaCompareToFloat(expected[field])
 			gotVal := kafkaCompareToFloat(received[field])
@@ -97,25 +123,6 @@ func kafkaCompare(
 				)
 			}
 		}
-
-		delete(expectedMap, key)
-		remaining--
-		matched++
-	}
-
-	if remaining > 0 {
-		missing := make([]string, 0, remaining)
-		for key := range expectedMap {
-			missing = append(missing, key)
-		}
-		limit := remaining
-		if limit > 5 {
-			limit = 5
-		}
-		return fmt.Errorf(
-			"не получил %d из %d ожидаемых сообщений (таймаут %s). Отсутствуют: %v",
-			remaining, matched+remaining, timeout, missing[:limit],
-		)
 	}
 
 	return nil
