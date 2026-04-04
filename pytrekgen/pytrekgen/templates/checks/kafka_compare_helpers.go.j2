@@ -27,7 +27,6 @@ func kafkaCompare(
 		key := kafkaCompareBuildKey(msg, matchBy)
 		expectedMap[key] = msg
 	}
-	remaining := len(expectedMap)
 
 	// Send input data to send topic
 	writer := infra.NewKafkaWriter(infra.KafkaConfig{
