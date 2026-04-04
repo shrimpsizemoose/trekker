@@ -92,7 +92,7 @@ func kafkaCompare(
 			gotVal := kafkaCompareToFloat(received[field])
 			if math.Abs(expVal-gotVal) > floatTolerance {
 				return fmt.Errorf(
-					"сообщение %s: поле %s — ожидал %v, получил %v",
+					"сообщение %s: поле %s — ожидал %g, получил %g",
 					key, field, expVal, gotVal,
 				)
 			}
@@ -124,7 +124,16 @@ func kafkaCompare(
 func kafkaCompareBuildKey(msg map[string]interface{}, fields []string) string {
 	parts := make([]string, len(fields))
 	for i, f := range fields {
-		parts[i] = fmt.Sprintf("%v", msg[f])
+		switch val := msg[f].(type) {
+		case float64:
+			if val == math.Trunc(val) {
+				parts[i] = fmt.Sprintf("%.0f", val)
+			} else {
+				parts[i] = fmt.Sprintf("%g", val)
+			}
+		default:
+			parts[i] = fmt.Sprintf("%v", val)
+		}
 	}
 	return strings.Join(parts, "_")
 }
