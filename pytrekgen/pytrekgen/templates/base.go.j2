@@ -19,7 +19,7 @@ import (
 	"github.com/shrimpsizemoose/trekker/analytics"
 	"github.com/shrimpsizemoose/trekker/cli"
 	"github.com/shrimpsizemoose/trekker/env"
-{% if config.has_kafka_checks %}
+{% if config.has_kafka_checks or config.has_clickhouse_compare_checks %}
 	"github.com/shrimpsizemoose/trekker/infra"
 {% endif %}
 	"github.com/shrimpsizemoose/trekker/logger"

@@ -713,3 +713,148 @@ class TestOnSuccessEvent:
         )
         code = generator.generate(config)
         assert 'tracker.Ping("mode_ok"' in code
+
+
+# ── clickhouse_compare ────────────────────────────────────────────────
+
+
+def _ch_compare_check(**overrides):
+    base = {
+        "type": "clickhouse_compare",
+        "kafka_addr_env": "LAB03S_KAFKA",
+        "send_topic_env": "TOPIC_IN",
+        "send_file_jsonl": "inputEvents.jsonl",
+        "receive_wait_before_seconds": 30,
+        "clickhouse_addr_env": "CH_ADDR",
+        "query": "SELECT start_ts, revenue FROM t FINAL WHERE run_id = '%s' FORMAT JSONEachRow",
+        "expected_file_jsonl": "expectedOutput.jsonl",
+        "match_by": ["start_ts"],
+        "compare": ["revenue"],
+    }
+    base.update(overrides)
+    return base
+
+
+def _ch_compare_code(generator, **overrides):
+    config = minimal_config(checks=[_ch_compare_check(**overrides)])
+    return generator.generate(config)
+
+
+def test_ch_compare_generates_helper(generator):
+    assert "func clickhouseCompare(" in _ch_compare_code(generator)
+
+
+def test_ch_compare_call_site(generator):
+    code = _ch_compare_code(generator)
+    assert "clickhouseCompare(" in code
+    assert "rootCtx" in code
+
+
+def test_ch_compare_env_prefix_kafka(generator):
+    code = _ch_compare_code(generator)
+    assert 'os.Getenv("TEST_LAB03S_KAFKA")' in code
+
+
+def test_ch_compare_env_prefix_ch(generator):
+    code = _ch_compare_code(generator)
+    assert 'os.Getenv("TEST_CH_ADDR")' in code
+
+
+def test_ch_compare_empty_creds_when_not_set(generator):
+    code = _ch_compare_code(generator)
+    assert '"",' in code
+
+
+def test_ch_compare_with_creds(generator):
+    code = _ch_compare_code(generator, clickhouse_user_env="CH_USER", clickhouse_pass_env="CH_PASS")
+    assert 'os.Getenv("TEST_CH_USER")' in code
+    assert 'os.Getenv("TEST_CH_PASS")' in code
+
+
+def test_ch_compare_data_references(generator):
+    code = _ch_compare_code(generator)
+    assert "inputEventsData" in code
+    assert "expectedOutputData" in code
+
+
+def test_ch_compare_match_and_compare_fields(generator):
+    code = _ch_compare_code(generator, match_by=["ts", "cid"], compare=["rev", "aov"])
+    assert '"ts"' in code
+    assert '"cid"' in code
+    assert '"rev"' in code
+    assert '"aov"' in code
+
+
+def test_ch_compare_float_tolerance(generator):
+    assert "0.01" in _ch_compare_code(generator, float_tolerance=0.01)
+
+
+def test_ch_compare_wait_seconds(generator):
+    assert "60 * time.Second" in _ch_compare_code(generator, receive_wait_before_seconds=60)
+
+
+def test_ch_compare_message_before(generator):
+    assert "Проверяю..." in _ch_compare_code(generator, message_before="Проверяю...")
+
+
+def test_ch_compare_message_success(generator):
+    code = _ch_compare_code(generator, message_success="Ок!")
+    assert "Ок!" in code
+    assert "logger.Victory" in code
+
+
+def test_ch_compare_failure_event(generator):
+    code = _ch_compare_code(generator, on_failure={"event": "fail_ev", "message": "Не совпало"})
+    assert '"fail_ev"' in code
+    assert "Не совпало" in code
+
+
+def test_ch_compare_success_event(generator):
+    assert 'tracker.Ping("ok_ev"' in _ch_compare_code(generator, on_success={"event": "ok_ev"})
+
+
+def test_ch_compare_query_in_code(generator):
+    code = _ch_compare_code(generator)
+    assert "FINAL" in code
+    assert "FORMAT JSONEachRow" in code
+
+
+def test_ch_compare_infra_import(generator):
+    assert '"github.com/shrimpsizemoose/trekker/infra"' in _ch_compare_code(generator)
+
+
+def test_ch_compare_no_direct_kafka_import(generator):
+    code = _ch_compare_code(generator)
+    assert 'kafka "github.com/segmentio/kafka-go"' not in code
+
+
+def test_ch_compare_requires_context(generator):
+    assert "rootCtx, rootCancel" in _ch_compare_code(generator)
+
+
+def test_ch_compare_self_contained_helpers(generator):
+    code = _ch_compare_code(generator)
+    assert "func chCompareBuildKey(" in code
+    assert "func chFmtNum(" in code
+    assert "func chCompareToFloat(" in code
+
+
+def test_ch_compare_no_kafka_compare_helpers_conflict(generator):
+    """Both check types together should not produce duplicate function names."""
+    config = minimal_config(checks=[
+        _ch_compare_check(),
+        {
+            "type": "kafka_compare",
+            "kafka_addr_env": "KAFKA",
+            "send_topic_env": "T_IN",
+            "send_file_jsonl": "input.jsonl",
+            "receive_topic_env": "T_OUT",
+            "receive_expected_file_jsonl": "expected.jsonl",
+            "match_by": ["id"],
+            "compare": ["val"],
+        }
+    ])
+    code = generator.generate(config)
+    # chCompare* and kafkaCompare* helpers should both exist without collision
+    assert "func chCompareBuildKey(" in code
+    assert "func kafkaCompareBuildKey(" in code

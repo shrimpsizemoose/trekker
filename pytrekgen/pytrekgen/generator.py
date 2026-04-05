@@ -121,6 +121,13 @@ class Generator:
                 if check.expected:
                     return f"query: {check.query} → {check.expected!r}"
                 return f"query: {check.query} → {check.expected_rows} rows"
+            case "clickhouse_compare":
+                parts = list(check.match_by)
+                return (
+                    f"send {check.send_file_jsonl} → ${{{check.send_topic_env}}} "
+                    f"| query CH → {check.expected_file_jsonl} "
+                    f"[{', '.join(parts)}]"
+                )
             case "custom":
                 detail = f"func: {check.func}()"
                 if config and config.custom_code and config.custom_code.code_file:

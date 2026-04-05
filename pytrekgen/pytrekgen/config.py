@@ -27,6 +27,7 @@ CHECK_TYPE_HELPERS: dict[str, list[str]] = {
     "kafka_compare": ["checks/kafka_compare_helpers.go.j2"],
     "postgres_tables_empty": ["checks/postgres_tables_empty_helpers.go.j2"],
     "clickhouse_query_simple": ["checks/clickhouse_query_simple_helpers.go.j2"],
+    "clickhouse_compare": ["checks/clickhouse_compare_helpers.go.j2"],
 }
 
 # Each check type declares which Go stdlib imports it needs.
@@ -50,6 +51,10 @@ CHECK_TYPE_STDLIB_IMPORTS: dict[str, set[str]] = {
     "postgres_tables_empty": {"context", "os/signal", "database/sql"},
     "custom": {"context", "os/signal"},
     "clickhouse_query_simple": {"net/http", "net/url", "io", "strings"},
+    "clickhouse_compare": {
+        "context", "os/signal", "encoding/json", "fmt", "math",
+        "net/http", "net/url", "io", "bufio", "strings", "time", "bytes",
+    },
 }
 
 # -----------------------------------------------------------------------------
@@ -556,6 +561,75 @@ class ClickhouseQuerySimpleCheck(BaseCheck):
         return self
 
 
+class ClickhouseCompareCheck(BaseCheck):
+    """Send JSONL to Kafka, wait, query ClickHouse with FINAL, compare multi-row results."""
+
+    type: Literal["clickhouse_compare"] = "clickhouse_compare"
+
+    # Send phase
+    kafka_addr_env: str = Field(
+        description="Environment variable name containing Kafka address (host:port)"
+    )
+    send_topic_env: str = Field(
+        description="Environment variable name containing input Kafka topic name"
+    )
+    send_file_jsonl: str = Field(
+        description="JSONL file to send to Kafka (must match an embedded_data entry)"
+    )
+
+    # Wait
+    receive_wait_before_seconds: int = Field(
+        default=30,
+        description="Seconds to wait after sending before querying ClickHouse",
+    )
+
+    # ClickHouse query
+    clickhouse_addr_env: str = Field(
+        description="Environment variable name containing ClickHouse host:port"
+    )
+    clickhouse_user_env: str = Field(
+        default="",
+        description="Environment variable name for ClickHouse user (optional)",
+    )
+    clickhouse_pass_env: str = Field(
+        default="",
+        description="Environment variable name for ClickHouse password (optional)",
+    )
+    query: str = Field(
+        description=(
+            "ClickHouse SQL query returning FORMAT JSONEachRow. "
+            "Must include FINAL. Use '%s' as placeholder for run_id value. "
+            "Example: SELECT ts_start, campaign_id, revenue FROM metrics FINAL "
+            "WHERE run_id = '%s' FORMAT JSONEachRow"
+        )
+    )
+
+    # Ground truth
+    expected_file_jsonl: str = Field(
+        description="JSONL file with expected rows (must match an embedded_data entry)"
+    )
+
+    # Comparison
+    match_by: list[str] = Field(
+        description="Fields forming the composite key for matching rows"
+    )
+    compare: list[str] = Field(
+        description="Fields to compare between expected and received rows"
+    )
+    float_tolerance: float = Field(
+        default=0.0001,
+        description="Maximum allowed difference for numeric comparisons",
+    )
+
+    # UX
+    message_before: str = Field(
+        default="", description="Message to display before starting"
+    )
+    message_success: str = Field(
+        default="", description="Message to display on success"
+    )
+
+
 class CustomCheck(BaseCheck):
     """Custom check implemented as a Go function in custom_code."""
 
@@ -607,6 +681,7 @@ Check = Annotated[
     | PostgresConnectCheck
     | PostgresTablesEmptyCheck
     | ClickhouseQuerySimpleCheck
+    | ClickhouseCompareCheck
     | CustomCheck
     | BranchFlagCheck,
     Field(discriminator="type"),
@@ -699,6 +774,10 @@ class LabConfig(BaseModel):
         return any(c.type == "clickhouse_query_simple" for c in self.checks)
 
     @property
+    def has_clickhouse_compare_checks(self) -> bool:
+        return any(c.type == "clickhouse_compare" for c in self.checks)
+
+    @property
     def has_custom_checks(self) -> bool:
         return any(c.type == "custom" for c in self.checks)
 
@@ -731,6 +810,7 @@ class LabConfig(BaseModel):
             or self.has_kafka_checks
             or self.has_postgres_checks
             or self.has_custom_checks
+            or self.has_clickhouse_compare_checks
         )
 
     def get_confirm_fields(self) -> list[ConfirmField]:
@@ -793,7 +873,7 @@ class LabConfig(BaseModel):
     def auto_third_party_imports(self) -> set[str]:
         """Trekker/third-party packages auto-imported by the template."""
         auto = {"trekker:analytics", "trekker:cli", "trekker:env", "trekker:logger"}
-        if self.has_kafka_checks:
+        if self.has_kafka_checks or self.has_clickhouse_compare_checks:
             auto.add("trekker:infra")
         if self.has_masked_fields:
             auto.add("trekker:utils")

@@ -1,0 +1,194 @@
+
+func clickhouseCompare(
+	ctx context.Context,
+	kafkaAddr string,
+	sendTopic string,
+	sendData []byte,
+	waitBefore time.Duration,
+	chAddr string,
+	chUser string,
+	chPass string,
+	queryTemplate string,
+	expectedData []byte,
+	matchBy []string,
+	compareFields []string,
+	floatTolerance float64,
+	runID string,
+) error {
+	// Parse expected JSONL into map[compositeKey]map[string]interface{}
+	expectedMap := make(map[string]map[string]interface{})
+	scanner := bufio.NewScanner(bytes.NewReader(expectedData))
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var row map[string]interface{}
+		if err := json.Unmarshal(line, &row); err != nil {
+			return fmt.Errorf("ошибка парсинга expected JSONL: %w", err)
+		}
+		key := chCompareBuildKey(row, matchBy)
+		expectedMap[key] = row
+	}
+
+	logger.Info.Printf("Ожидаю %d строк с run_id=%s", len(expectedMap), runID)
+
+	// Inject run_id into each input event and send to Kafka
+	var messages [][]byte
+	scanner = bufio.NewScanner(bytes.NewReader(sendData))
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var msg map[string]interface{}
+		if err := json.Unmarshal(line, &msg); err != nil {
+			return fmt.Errorf("ошибка парсинга input JSONL: %w", err)
+		}
+		msg["run_id"] = runID
+		enriched, err := json.Marshal(msg)
+		if err != nil {
+			return fmt.Errorf("ошибка сериализации: %w", err)
+		}
+		messages = append(messages, enriched)
+	}
+
+	writer := infra.NewKafkaWriter(infra.KafkaConfig{
+		Addr:  kafkaAddr,
+		Topic: sendTopic,
+	})
+	defer writer.Close()
+
+	if err := writer.WriteMessages(ctx, messages); err != nil {
+		return fmt.Errorf("не удалось отправить данные в Kafka: %w", err)
+	}
+	logger.Info.Printf("Отправлено %d сообщений в %s (run_id=%s)", len(messages), sendTopic, runID)
+
+	// Wait for Spark to process and flush to ClickHouse
+	if waitBefore > 0 {
+		logger.Info.Printf("Жду %s перед запросом в ClickHouse...", waitBefore)
+		time.Sleep(waitBefore)
+	}
+
+	// Build ClickHouse query: substitute run_id placeholder
+	query := fmt.Sprintf(queryTemplate, runID)
+
+	// Execute ClickHouse HTTP query
+	params := url.Values{}
+	params.Add("query", query)
+	if chUser != "" {
+		params.Add("user", chUser)
+	}
+	if chPass != "" {
+		params.Add("password", chPass)
+	}
+	clickURL := fmt.Sprintf("http://%s/?%s", chAddr, params.Encode())
+	resp, err := http.Get(clickURL) //nolint:noctx
+	if err != nil {
+		return fmt.Errorf("ошибка подключения к ClickHouse: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ClickHouse вернул %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("ошибка чтения ответа ClickHouse: %w", err)
+	}
+
+	// Parse JSONEachRow response — keep last value per composite key
+	receivedMap := make(map[string]map[string]interface{})
+	scanner = bufio.NewScanner(bytes.NewReader(body))
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var row map[string]interface{}
+		if err := json.Unmarshal(line, &row); err != nil {
+			continue
+		}
+		key := chCompareBuildKey(row, matchBy)
+		if _, ok := expectedMap[key]; ok {
+			receivedMap[key] = row
+		}
+	}
+
+	logger.Info.Printf("Получено совпадающих строк: %d из %d ожидаемых", len(receivedMap), len(expectedMap))
+
+	// Check for missing rows
+	var missing []string
+	for key := range expectedMap {
+		if _, ok := receivedMap[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		limit := len(missing)
+		if limit > 5 {
+			limit = 5
+		}
+		return fmt.Errorf(
+			"не найдено %d из %d ожидаемых строк в ClickHouse (run_id=%s). Отсутствуют: %v",
+			len(missing), len(expectedMap), runID, missing[:limit],
+		)
+	}
+
+	// Compare fields with tolerance
+	for key, expected := range expectedMap {
+		received := receivedMap[key]
+		for _, field := range compareFields {
+			expVal := chCompareToFloat(expected[field])
+			gotVal := chCompareToFloat(received[field])
+			if math.Abs(expVal-gotVal) > floatTolerance {
+				return fmt.Errorf(
+					"строка %s: поле %s — ожидал %s, получил %s (run_id=%s)",
+					key, field, chFmtNum(expVal), chFmtNum(gotVal), runID,
+				)
+			}
+		}
+	}
+
+	return nil
+}
+
+func chCompareBuildKey(msg map[string]interface{}, fields []string) string {
+	parts := make([]string, len(fields))
+	for i, f := range fields {
+		switch val := msg[f].(type) {
+		case float64:
+			if val == math.Trunc(val) {
+				parts[i] = fmt.Sprintf("%.0f", val)
+			} else {
+				parts[i] = fmt.Sprintf("%g", val)
+			}
+		default:
+			parts[i] = fmt.Sprintf("%v", val)
+		}
+	}
+	return strings.Join(parts, "_")
+}
+
+func chFmtNum(v float64) string {
+	if v == math.Trunc(v) && math.Abs(v) < 1e15 {
+		return fmt.Sprintf("%.0f", v)
+	}
+	return fmt.Sprintf("%.4f", v)
+}
+
+func chCompareToFloat(v interface{}) float64 {
+	switch val := v.(type) {
+	case float64:
+		return val
+	case int:
+		return float64(val)
+	case json.Number:
+		f, _ := val.Float64()
+		return f
+	default:
+		return 0
+	}
+}

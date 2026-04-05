@@ -390,3 +390,37 @@ def test_cli_codegen_still_works(examples_dir, tmp_path):
     assert result.returncode == 0
     assert out.exists()
     assert "package main" in out.read_text()
+
+
+def test_check_detail_clickhouse_compare():
+    from pytrekgen.config import ClickhouseCompareCheck
+    check = ClickhouseCompareCheck(
+        kafka_addr_env="K", send_topic_env="T_IN", send_file_jsonl="input.jsonl",
+        clickhouse_addr_env="CH",
+        query="SELECT x FROM t FINAL WHERE run_id='%s' FORMAT JSONEachRow",
+        expected_file_jsonl="expected.jsonl",
+        match_by=["ts_start", "campaign_id"],
+        compare=["revenue"],
+    )
+    detail = Generator._check_detail(check)
+    assert "input.jsonl" in detail
+    assert "T_IN" in detail
+    assert "ts_start" in detail
+    assert "expected.jsonl" in detail
+
+
+def test_ascii_shows_clickhouse_compare(gen):
+    from pytrekgen.config import ClickhouseCompareCheck
+    config = minimal_config(checks=[
+        ClickhouseCompareCheck(
+            name="verify_ch",
+            kafka_addr_env="K", send_topic_env="T_IN", send_file_jsonl="input.jsonl",
+            clickhouse_addr_env="CH",
+            query="SELECT x FROM t FINAL WHERE run_id='%s' FORMAT JSONEachRow",
+            expected_file_jsonl="expected.jsonl",
+            match_by=["ts"], compare=["revenue"],
+        )
+    ])
+    out = gen.generate_flow(config, fmt="ascii")
+    assert "[clickhouse_compare]" in out
+    assert "verify_ch" in out

@@ -1,0 +1,40 @@
+{% if check.message_before %}
+	logger.Info.Println("{{ check.message_before }}")
+{% endif %}
+	if err := clickhouseCompare(
+		rootCtx,
+		os.Getenv("{{ check.kafka_addr_env | prefixed_env(config.env_prefix) }}"),
+		os.Getenv("{{ check.send_topic_env | prefixed_env(config.env_prefix) }}"),
+		{{ check.send_file_jsonl | replace('.jsonl', '') }}Data,
+		{{ check.receive_wait_before_seconds }} * time.Second,
+		os.Getenv("{{ check.clickhouse_addr_env | prefixed_env(config.env_prefix) }}"),
+{% if check.clickhouse_user_env %}
+		os.Getenv("{{ check.clickhouse_user_env | prefixed_env(config.env_prefix) }}"),
+{% else %}
+		"",
+{% endif %}
+{% if check.clickhouse_pass_env %}
+		os.Getenv("{{ check.clickhouse_pass_env | prefixed_env(config.env_prefix) }}"),
+{% else %}
+		"",
+{% endif %}
+		"{{ check.query }}",
+		{{ check.expected_file_jsonl | replace('.jsonl', '') }}Data,
+		[]string{ {{ check.match_by | map('quote') | join(', ') }} },
+		[]string{ {{ check.compare | map('quote') | join(', ') }} },
+		{{ check.float_tolerance }},
+		tracker.RunID(),
+	); err != nil {
+{% if check.on_failure.event %}
+		tracker.Ping("{{ check.on_failure.event }}", nil)
+		logger.Error.Fatalf("{{ check.on_failure.message }}: %v", err)
+{% else %}
+		logger.Error.Fatal(err)
+{% endif %}
+	}
+{% if check.message_success %}
+	logger.Victory.Println("{{ check.message_success }}")
+{% endif %}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}
