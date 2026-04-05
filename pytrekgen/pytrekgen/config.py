@@ -465,7 +465,6 @@ class KafkaCompareCheck(BaseCheck):
     float_tolerance: float = Field(
         default=0.0001, description="Maximum allowed difference for float comparisons"
     )
-
     message_before: str = Field(
         default="", description="Message to display before starting"
     )

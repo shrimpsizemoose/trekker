@@ -11,6 +11,7 @@ func kafkaCompare(
 	matchBy []string,
 	compareFields []string,
 	floatTolerance float64,
+	runID string,
 ) error {
 	// Parse expected into map[key]map[string]interface{}
 	expectedMap := make(map[string]map[string]interface{})
@@ -28,13 +29,9 @@ func kafkaCompare(
 		expectedMap[key] = msg
 	}
 
-	// Send input data to send topic
-	writer := infra.NewKafkaWriter(infra.KafkaConfig{
-		Addr:  kafkaAddr,
-		Topic: sendTopic,
-	})
-	defer writer.Close()
+	logger.Info.Printf("Ожидаю %d окон с run_id=%s", len(expectedMap), runID)
 
+	// Inject run_id into each input message before sending
 	var messages [][]byte
 	scanner = bufio.NewScanner(bytes.NewReader(sendData))
 	for scanner.Scan() {
@@ -42,12 +39,29 @@ func kafkaCompare(
 		if len(line) == 0 {
 			continue
 		}
-		messages = append(messages, append([]byte{}, line...))
+		var msg map[string]interface{}
+		if err := json.Unmarshal(line, &msg); err != nil {
+			return fmt.Errorf("ошибка парсинга input JSONL: %w", err)
+		}
+		msg["run_id"] = runID
+		enriched, err := json.Marshal(msg)
+		if err != nil {
+			return fmt.Errorf("ошибка сериализации: %w", err)
+		}
+		messages = append(messages, enriched)
 	}
+
+	// Send input data to send topic
+	writer := infra.NewKafkaWriter(infra.KafkaConfig{
+		Addr:  kafkaAddr,
+		Topic: sendTopic,
+	})
+	defer writer.Close()
+
 	if err := writer.WriteMessages(ctx, messages); err != nil {
 		return fmt.Errorf("не удалось отправить данные в Kafka: %w", err)
 	}
-	logger.Info.Printf("Отправлено %d сообщений в %s", len(messages), sendTopic)
+	logger.Info.Printf("Отправлено %d сообщений в %s (run_id=%s)", len(messages), sendTopic, runID)
 
 	// Wait before reading
 	if waitBefore > 0 {
@@ -55,14 +69,14 @@ func kafkaCompare(
 		time.Sleep(waitBefore)
 	}
 
-	// Read from receive topic with timeout
+	// Read from output topic
 	reader := infra.NewKafkaReader(infra.KafkaConfig{
 		Addr:  kafkaAddr,
 		Topic: receiveTopic,
 	})
 	defer reader.Close()
 
-	// Collect last value per key (update mode emits partial results first)
+	// Collect last value per key, filtering by run_id
 	receivedMap := make(map[string]map[string]interface{})
 	deadline := time.Now().Add(timeout)
 	lastMsg := time.Now()
@@ -78,13 +92,18 @@ func kafkaCompare(
 			}
 			continue
 		}
-		lastMsg = time.Now()
 
 		var received map[string]interface{}
 		if err := json.Unmarshal(msg, &received); err != nil {
 			continue
 		}
 
+		// Skip messages from other runs
+		if rid, ok := received["run_id"]; !ok || fmt.Sprintf("%v", rid) != runID {
+			continue
+		}
+
+		lastMsg = time.Now()
 		key := kafkaCompareBuildKey(received, matchBy)
 		if _, ok := expectedMap[key]; ok {
 			receivedMap[key] = received
@@ -104,8 +123,8 @@ func kafkaCompare(
 			limit = 5
 		}
 		return fmt.Errorf(
-			"не получил %d из %d ожидаемых сообщений (таймаут %s). Отсутствуют: %v",
-			len(missing), len(expectedMap), timeout, missing[:limit],
+			"не получил %d из %d ожидаемых сообщений (таймаут %s, run_id=%s). Отсутствуют: %v",
+			len(missing), len(expectedMap), timeout, runID, missing[:limit],
 		)
 	}
 
@@ -117,8 +136,8 @@ func kafkaCompare(
 			gotVal := kafkaCompareToFloat(received[field])
 			if math.Abs(expVal-gotVal) > floatTolerance {
 				return fmt.Errorf(
-					"сообщение %s: поле %s — ожидал %s, получил %s",
-					key, field, kafkaFmtNum(expVal), kafkaFmtNum(gotVal),
+					"сообщение %s: поле %s — ожидал %s, получил %s (run_id=%s)",
+					key, field, kafkaFmtNum(expVal), kafkaFmtNum(gotVal), runID,
 				)
 			}
 		}

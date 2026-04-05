@@ -13,6 +13,7 @@
 		[]string{ {{ check.match_by | map('quote') | join(', ') }} },
 		[]string{ {{ check.compare | map('quote') | join(', ') }} },
 		{{ check.float_tolerance }},
+		tracker.RunID(),
 	); err != nil {
 {% if check.on_failure.event %}
 		tracker.Ping("{{ check.on_failure.event }}", nil)

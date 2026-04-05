@@ -58,6 +58,13 @@ def main() -> None:
         action="store_true",
         help="Generate go.mod alongside the checker (requires -o and build.module in config)",
     )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Override config value (dot notation, e.g. analytics.offline=true)",
+    )
 
     viz_group = parser.add_mutually_exclusive_group()
     viz_group.add_argument(
@@ -91,9 +98,22 @@ def main() -> None:
 
     generator = Generator(template_dir=args.template_dir)
 
+    overrides = {}
+    for item in args.set:
+        if "=" not in item:
+            log.error("Invalid --set format: %s (expected KEY=VALUE)", item)
+            sys.exit(1)
+        key, value = item.split("=", 1)
+        # Auto-convert booleans and numbers
+        if value.lower() in ("true", "false"):
+            value = value.lower() == "true"
+        elif value.isdigit():
+            value = int(value)
+        overrides[key] = value
+
     try:
         log.debug("Loading config from %s", args.input_path)
-        config = generator.load_config(args.input_path)
+        config = generator.load_config(args.input_path, overrides=overrides)
         log.debug("Loaded config for lab %s", config.lab.id)
     except Exception as e:
         log.error("Failed to parse config: %s", e)

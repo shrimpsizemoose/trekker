@@ -222,7 +222,7 @@ class Generator:
         return f'fmt.Sprintf("{format_str}", {getenvs}, )'
 
     @classmethod
-    def load_config(cls, config_path: Path) -> LabConfig:
+    def load_config(cls, config_path: Path, overrides: dict | None = None) -> LabConfig:
         """Load and validate configuration from YAML file.
 
         Returns:
@@ -268,6 +268,14 @@ class Generator:
                 # Merge: file content first, then inline
                 cc["code"] = file_content + "\n" + cc.get("code", "")
                 cc["code"] = cc["code"].strip()
+
+        # Apply dot-notation overrides (e.g. {"analytics.offline": True})
+        for key, value in (overrides or {}).items():
+            parts = key.split(".")
+            target = data
+            for part in parts[:-1]:
+                target = target.setdefault(part, {})
+            target[parts[-1]] = value
 
         return LabConfig.model_validate(data)
 
