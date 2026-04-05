@@ -15,7 +15,6 @@ type KafkaConfig struct {
 	Topic            string
 	BatchSize        int
 	BatchDelayPeriod time.Duration
-	StartFromLatest  bool
 }
 
 type WriterStats struct {
@@ -176,14 +175,10 @@ type KafkaReader struct {
 }
 
 func NewKafkaReader(cfg KafkaConfig) *KafkaReader {
-	rc := kafka.ReaderConfig{
+	return &KafkaReader{reader: kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{cfg.Addr},
 		Topic:   cfg.Topic,
-	}
-	if cfg.StartFromLatest {
-		rc.StartOffset = kafka.LastOffset
-	}
-	return &KafkaReader{reader: kafka.NewReader(rc)}
+	})}
 }
 
 func (r *KafkaReader) ReadMessage(ctx context.Context) ([]byte, error) {
