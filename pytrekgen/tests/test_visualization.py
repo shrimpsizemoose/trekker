@@ -393,8 +393,8 @@ def test_cli_codegen_still_works(examples_dir, tmp_path):
 
 
 def test_check_detail_clickhouse_compare():
-    from pytrekgen.config import ClickhouseCompareCheck
-    check = ClickhouseCompareCheck(
+    from pytrekgen.config import KafkaToClickhouseCheck
+    check = KafkaToClickhouseCheck(
         kafka_addr_env="K", send_topic_env="T_IN", send_file_jsonl="input.jsonl",
         clickhouse_addr_env="CH",
         query="SELECT x FROM t FINAL WHERE run_id='%s' FORMAT JSONEachRow",
@@ -410,9 +410,9 @@ def test_check_detail_clickhouse_compare():
 
 
 def test_ascii_shows_clickhouse_compare(gen):
-    from pytrekgen.config import ClickhouseCompareCheck
+    from pytrekgen.config import KafkaToClickhouseCheck
     config = minimal_config(checks=[
-        ClickhouseCompareCheck(
+        KafkaToClickhouseCheck(
             name="verify_ch",
             kafka_addr_env="K", send_topic_env="T_IN", send_file_jsonl="input.jsonl",
             clickhouse_addr_env="CH",
@@ -422,5 +422,5 @@ def test_ascii_shows_clickhouse_compare(gen):
         )
     ])
     out = gen.generate_flow(config, fmt="ascii")
-    assert "[clickhouse_compare]" in out
+    assert "[kafka_to_clickhouse]" in out
     assert "verify_ch" in out

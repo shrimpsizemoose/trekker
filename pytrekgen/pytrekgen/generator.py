@@ -121,7 +121,7 @@ class Generator:
                 if check.expected:
                     return f"query: {check.query} → {check.expected!r}"
                 return f"query: {check.query} → {check.expected_rows} rows"
-            case "clickhouse_compare":
+            case "kafka_to_clickhouse":
                 parts = list(check.match_by)
                 return (
                     f"send {check.send_file_jsonl} → ${{{check.send_topic_env}}} "

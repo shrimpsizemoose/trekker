@@ -27,7 +27,7 @@ CHECK_TYPE_HELPERS: dict[str, list[str]] = {
     "kafka_compare": ["checks/kafka_compare_helpers.go.j2"],
     "postgres_tables_empty": ["checks/postgres_tables_empty_helpers.go.j2"],
     "clickhouse_query_simple": ["checks/clickhouse_query_simple_helpers.go.j2"],
-    "clickhouse_compare": ["checks/clickhouse_compare_helpers.go.j2"],
+    "kafka_to_clickhouse": ["checks/kafka_to_clickhouse_helpers.go.j2"],
 }
 
 # Each check type declares which Go stdlib imports it needs.
@@ -51,7 +51,7 @@ CHECK_TYPE_STDLIB_IMPORTS: dict[str, set[str]] = {
     "postgres_tables_empty": {"context", "os/signal", "database/sql"},
     "custom": {"context", "os/signal"},
     "clickhouse_query_simple": {"net/http", "net/url", "io", "strings"},
-    "clickhouse_compare": {
+    "kafka_to_clickhouse": {
         "context", "os/signal", "encoding/json", "fmt", "math",
         "net/http", "net/url", "io", "bufio", "strings", "time", "bytes",
     },
@@ -561,10 +561,10 @@ class ClickhouseQuerySimpleCheck(BaseCheck):
         return self
 
 
-class ClickhouseCompareCheck(BaseCheck):
+class KafkaToClickhouseCheck(BaseCheck):
     """Send JSONL to Kafka, wait, query ClickHouse with FINAL, compare multi-row results."""
 
-    type: Literal["clickhouse_compare"] = "clickhouse_compare"
+    type: Literal["kafka_to_clickhouse"] = "kafka_to_clickhouse"
 
     # Send phase
     kafka_addr_env: str = Field(
@@ -681,7 +681,7 @@ Check = Annotated[
     | PostgresConnectCheck
     | PostgresTablesEmptyCheck
     | ClickhouseQuerySimpleCheck
-    | ClickhouseCompareCheck
+    | KafkaToClickhouseCheck
     | CustomCheck
     | BranchFlagCheck,
     Field(discriminator="type"),
@@ -774,8 +774,8 @@ class LabConfig(BaseModel):
         return any(c.type == "clickhouse_query_simple" for c in self.checks)
 
     @property
-    def has_clickhouse_compare_checks(self) -> bool:
-        return any(c.type == "clickhouse_compare" for c in self.checks)
+    def has_kafka_to_clickhouse_checks(self) -> bool:
+        return any(c.type == "kafka_to_clickhouse" for c in self.checks)
 
     @property
     def has_custom_checks(self) -> bool:
@@ -810,7 +810,7 @@ class LabConfig(BaseModel):
             or self.has_kafka_checks
             or self.has_postgres_checks
             or self.has_custom_checks
-            or self.has_clickhouse_compare_checks
+            or self.has_kafka_to_clickhouse_checks
         )
 
     def get_confirm_fields(self) -> list[ConfirmField]:
@@ -873,7 +873,7 @@ class LabConfig(BaseModel):
     def auto_third_party_imports(self) -> set[str]:
         """Trekker/third-party packages auto-imported by the template."""
         auto = {"trekker:analytics", "trekker:cli", "trekker:env", "trekker:logger"}
-        if self.has_kafka_checks or self.has_clickhouse_compare_checks:
+        if self.has_kafka_checks or self.has_kafka_to_clickhouse_checks:
             auto.add("trekker:infra")
         if self.has_masked_fields:
             auto.add("trekker:utils")

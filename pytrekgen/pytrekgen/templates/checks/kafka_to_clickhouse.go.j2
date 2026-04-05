@@ -1,7 +1,7 @@
 {% if check.message_before %}
 	logger.Info.Println("{{ check.message_before }}")
 {% endif %}
-	if err := clickhouseCompare(
+	if err := kafkaToClickhouse(
 		rootCtx,
 		os.Getenv("{{ check.kafka_addr_env | prefixed_env(config.env_prefix) }}"),
 		os.Getenv("{{ check.send_topic_env | prefixed_env(config.env_prefix) }}"),

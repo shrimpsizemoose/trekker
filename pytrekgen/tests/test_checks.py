@@ -715,12 +715,12 @@ class TestOnSuccessEvent:
         assert 'tracker.Ping("mode_ok"' in code
 
 
-# ── clickhouse_compare ────────────────────────────────────────────────
+# ── kafka_to_clickhouse ────────────────────────────────────────────────
 
 
 def _ch_compare_check(**overrides):
     base = {
-        "type": "clickhouse_compare",
+        "type": "kafka_to_clickhouse",
         "kafka_addr_env": "LAB03S_KAFKA",
         "send_topic_env": "TOPIC_IN",
         "send_file_jsonl": "inputEvents.jsonl",
@@ -741,12 +741,12 @@ def _ch_compare_code(generator, **overrides):
 
 
 def test_ch_compare_generates_helper(generator):
-    assert "func clickhouseCompare(" in _ch_compare_code(generator)
+    assert "func kafkaToClickhouse(" in _ch_compare_code(generator)
 
 
 def test_ch_compare_call_site(generator):
     code = _ch_compare_code(generator)
-    assert "clickhouseCompare(" in code
+    assert "kafkaToClickhouse(" in code
     assert "rootCtx" in code
 
 
