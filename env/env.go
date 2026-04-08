@@ -21,12 +21,16 @@ func LoadEnv() {
 // GetEnvOrDefault("HOST", "localhost", "использую хост по умолчанию")
 // -> "PORT не задан, использую порт по умолчанию: localhost"
 func GetEnvOrDefault(key, defaultValue string, defaultComment string) string {
-	if value, exists := os.LookupEnv(key); exists {
+	if value, exists := os.LookupEnv(key); exists && value != "" {
 		return value
 	}
 	if defaultComment != "" {
 		logger.Warn.Printf("%s не задан, %s: %s", key, defaultComment, defaultValue)
 	}
+	// Persist default back into the process env so downstream checks that
+	// read the variable via os.Getenv (e.g. postgres_tables_empty with
+	// tables_from_env) see the same value announced in the startup banner.
+	_ = os.Setenv(key, defaultValue)
 	return defaultValue
 }
 
