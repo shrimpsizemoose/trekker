@@ -7,6 +7,7 @@ from pytrekgen.config import (
     LabConfig,
     LabMeta,
     EnvVar,
+    EnvOneOf,
     OptionalEnvVar,
     OptionalEnvInt,
     Flag,
@@ -71,6 +72,15 @@ class TestEnvVar:
     def test_missing_error(self):
         with pytest.raises(ValidationError):
             EnvVar(name="TOKEN")
+
+
+class TestEnvOneOf:
+    """Tests for EnvOneOf model."""
+
+    def test_valid_env_one_of(self):
+        one_of = EnvOneOf(vars=["REDIS", "REDIS_URL"], error="need one")
+        assert one_of.vars == ["REDIS", "REDIS_URL"]
+        assert one_of.error == "need one"
 
 
 class TestOptionalEnvVar:

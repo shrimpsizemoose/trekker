@@ -202,6 +202,16 @@ class TestGenerate:
         assert '"TEST_TOKEN"' in code
         assert '"Need token"' in code
 
+    def test_includes_env_one_of_validation(self, generator):
+        config = minimal_config(
+            env_one_of=[{"vars": ["REDIS", "REDIS_URL"], "error": "Need one redis env"}]
+        )
+        code = generator.generate(config)
+        assert '"TEST_REDIS"' in code
+        assert '"TEST_REDIS_URL"' in code
+        assert "Need one redis env" in code
+        assert "strings.TrimSpace" in code
+
     def test_includes_custom_code(self, generator):
         config = minimal_config()
         config.custom_code.code = "func myCustomFunc() error { return nil }"

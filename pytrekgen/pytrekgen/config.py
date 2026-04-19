@@ -93,6 +93,16 @@ class OptionalEnvInt(BaseModel):
     message: str = ""
 
 
+class EnvOneOf(BaseModel):
+    """At least one of these env vars must be non-empty."""
+
+    vars: list[str]
+    error: str = Field(
+        default="",
+        description="Error message if none are set",
+    )
+
+
 class Flag(BaseModel):
     """Command-line flag."""
 
@@ -699,6 +709,7 @@ class LabConfig(BaseModel):
     lab: LabMeta
 
     required_env: list[EnvVar] = Field(default_factory=list)
+    env_one_of: list[EnvOneOf] = Field(default_factory=list)
     optional_env: list[OptionalEnvVar] = Field(default_factory=list)
     optional_env_int: list[OptionalEnvInt] = Field(default_factory=list)
 
@@ -867,6 +878,8 @@ class LabConfig(BaseModel):
         result = set(BASE_IMPORTS)
         for check in self.checks:
             result |= CHECK_TYPE_STDLIB_IMPORTS.get(check.type, set())
+        if self.env_one_of:
+            result.add("strings")
         return result
 
     @property

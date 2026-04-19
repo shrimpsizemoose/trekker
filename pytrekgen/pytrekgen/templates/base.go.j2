@@ -256,6 +256,28 @@ func main() {
 		"{{ ev.name | prefixed_env(config.env_prefix) }}": "{{ ev.error }}",
 {% endfor %}
 	})
+{% for one_of in config.env_one_of %}
+	{
+		found := false
+		for _, v := range []string{
+{% for var_name in one_of.vars %}
+			"{{ var_name | prefixed_env(config.env_prefix) }}",
+{% endfor %}
+		} {
+			if strings.TrimSpace(os.Getenv(v)) != "" {
+				found = true
+				break
+			}
+		}
+		if !found {
+{% if one_of.error %}
+			logger.Error.Fatal("{{ one_of.error }}")
+{% else %}
+			logger.Error.Fatal("Нужно задать хотя бы одну из: {{ one_of.vars | join(', ') }}")
+{% endif %}
+		}
+	}
+{% endfor %}
 
 	if !confirmSettings() {
 		return
