@@ -117,6 +117,14 @@ class Generator:
                 parts = list(check.tables)
                 parts += [f"${{{e}}}" for e in check.tables_from_env]
                 return f"tables empty: {', '.join(parts)}"
+            case "redis_connect":
+                if check.url_env:
+                    return f"connect ${{{check.url_env}}} or ${{{check.addr_env}}}"
+                return f"connect ${{{check.addr_env}}}"
+            case "redis_smembers":
+                return f"SMEMBERS vs {check.answers_file}"
+            case "redis_zrange":
+                return f"ZRANGE vs {check.answers_file}"
             case "clickhouse_query_simple":
                 if check.expected:
                     return f"query: {check.query} → {check.expected!r}"
@@ -600,6 +608,18 @@ class Generator:
             "",
             f"go {config.build.go_version}",
         ]
+
+        requires: list[str] = []
+        if config.has_redis_checks:
+            requires.append("github.com/go-redis/redis/v8 v8.11.5")
+        if config.has_redis_compare_checks:
+            requires.append("github.com/schollz/progressbar/v3 v3.18.0")
+        if requires:
+            lines.append("")
+            lines.append("require (")
+            for req in requires:
+                lines.append(f"\t{req}")
+            lines.append(")")
 
         if replace:
             lines.append("")

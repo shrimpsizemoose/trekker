@@ -16,6 +16,7 @@ from pytrekgen.config import (
     HTTPGetCheck,
     HTTPGetRandomPathCheck,
     HTTPRequestCheck,
+    KafkaCompareCheck,
     KafkaRoundtripCheck,
     KafkaSendFileCheck,
     KafkaTopicExistsCheck,
@@ -23,6 +24,9 @@ from pytrekgen.config import (
     ParamEqualsCheck,
     PostgresConnectCheck,
     PostgresTablesEmptyCheck,
+    RedisConnectCheck,
+    RedisSMembersCheck,
+    RedisZRangeCheck,
     WaitCheck,
 )
 
@@ -39,8 +43,12 @@ CHECK_TYPES = [
     KafkaTopicExistsCheck,
     KafkaRoundtripCheck,
     KafkaSendFileCheck,
+    KafkaCompareCheck,
     PostgresConnectCheck,
     PostgresTablesEmptyCheck,
+    RedisConnectCheck,
+    RedisSMembersCheck,
+    RedisZRangeCheck,
     ClickhouseQuerySimpleCheck,
     CustomCheck,
 ]

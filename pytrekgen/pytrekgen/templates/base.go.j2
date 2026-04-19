@@ -16,6 +16,12 @@ import (
 {% if config.has_kafka_checks %}
 	kafka "github.com/segmentio/kafka-go"
 {% endif %}
+{% if config.has_redis_checks %}
+	"github.com/go-redis/redis/v8"
+{% endif %}
+{% if config.has_redis_compare_checks %}
+	"github.com/schollz/progressbar/v3"
+{% endif %}
 	"github.com/shrimpsizemoose/trekker/analytics"
 	"github.com/shrimpsizemoose/trekker/cli"
 	"github.com/shrimpsizemoose/trekker/env"

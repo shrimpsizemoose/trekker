@@ -494,6 +494,101 @@ class TestPostgresTablesEmptyCheck:
         assert "func checkPostgresTablesEmpty(" in code
 
 
+class TestRedisConnectCheck:
+    """Tests for redis_connect generation."""
+
+    def test_generates_ping(self, generator):
+        config = minimal_config(
+            checks=[{"type": "redis_connect", "addr_env": "REDIS"}]
+        )
+        code = generator.generate(config)
+        assert "redisCli.Ping" in code
+
+    def test_uses_prefixed_env_vars(self, generator):
+        config = minimal_config(
+            checks=[{"type": "redis_connect", "addr_env": "REDIS", "url_env": "REDIS_URL"}]
+        )
+        code = generator.generate(config)
+        assert '"TEST_REDIS"' in code
+        assert '"TEST_REDIS_URL"' in code
+
+    def test_includes_shared_helper(self, generator):
+        config = minimal_config(
+            checks=[{"type": "redis_connect", "addr_env": "REDIS"}]
+        )
+        code = generator.generate(config)
+        assert "func redisConnect(" in code
+
+
+class TestRedisSMembersCheck:
+    """Tests for redis_smembers generation."""
+
+    def test_generates_check_call(self, generator):
+        config = minimal_config(
+            embedded_data=[{"name": "answersFavDay1", "file": "answers_fav_day1.json"}],
+            checks=[
+                {
+                    "type": "redis_smembers",
+                    "addr_env": "REDIS",
+                    "answers_file": "answers_fav_day1.json",
+                }
+            ],
+        )
+        code = generator.generate(config)
+        assert "redisSMembersCheck(" in code
+        assert "answersFavDay1Data" in code
+
+    def test_includes_smembers_logic_and_sort(self, generator):
+        config = minimal_config(
+            embedded_data=[{"name": "answers", "file": "answers.json"}],
+            checks=[
+                {
+                    "type": "redis_smembers",
+                    "addr_env": "REDIS",
+                    "answers_file": "answers.json",
+                }
+            ],
+        )
+        code = generator.generate(config)
+        assert ".SMembers(" in code
+        assert "sort.Strings(actual)" in code
+        assert "sort.Strings(expected)" in code
+
+
+class TestRedisZRangeCheck:
+    """Tests for redis_zrange generation."""
+
+    def test_generates_check_call(self, generator):
+        config = minimal_config(
+            embedded_data=[{"name": "answersFavDay1", "file": "answers_fav_day1.json"}],
+            checks=[
+                {
+                    "type": "redis_zrange",
+                    "addr_env": "REDIS",
+                    "answers_file": "answers_fav_day1.json",
+                }
+            ],
+        )
+        code = generator.generate(config)
+        assert "redisZRangeCheck(" in code
+        assert "answersFavDay1Data" in code
+
+    def test_includes_zrange_logic_without_sorting(self, generator):
+        config = minimal_config(
+            embedded_data=[{"name": "answers", "file": "answers.json"}],
+            checks=[
+                {
+                    "type": "redis_zrange",
+                    "addr_env": "REDIS",
+                    "answers_file": "answers.json",
+                }
+            ],
+        )
+        code = generator.generate(config)
+        assert ".ZRange(" in code
+        assert "sort.Strings(actual)" not in code
+
+
 def _kafka_compare_check(**overrides):
     """Build a minimal kafka_compare check dict with optional overrides."""
     base = {

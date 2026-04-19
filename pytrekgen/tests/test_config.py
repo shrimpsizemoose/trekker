@@ -31,6 +31,9 @@ from pytrekgen.config import (
     KafkaCompareCheck,
     PostgresConnectCheck,
     PostgresTablesEmptyCheck,
+    RedisConnectCheck,
+    RedisSMembersCheck,
+    RedisZRangeCheck,
     CustomCheck,
 )
 
@@ -295,6 +298,27 @@ class TestCheckTypes:
         assert check.func == "myValidator"
         assert "context" in check.requires
 
+    def test_redis_connect_check(self):
+        check = RedisConnectCheck(addr_env="REDIS", url_env="REDIS_URL")
+        assert check.type == "redis_connect"
+        assert check.timeout_seconds == 10
+
+    def test_redis_smembers_check(self):
+        check = RedisSMembersCheck(
+            addr_env="REDIS",
+            answers_file="answers.json",
+        )
+        assert check.type == "redis_smembers"
+        assert check.timeout_per_key_seconds == 10
+
+    def test_redis_zrange_check(self):
+        check = RedisZRangeCheck(
+            addr_env="REDIS",
+            answers_file="answers.json",
+        )
+        assert check.type == "redis_zrange"
+        assert check.timeout_per_key_seconds == 10
+
 
 class TestCheckTypeDiscriminator:
     """Test that check types are correctly discriminated in LabConfig."""
@@ -339,6 +363,18 @@ class TestCheckTypeDiscriminator:
             ]
         )
         assert isinstance(config.checks[0], KafkaCompareCheck)
+
+    def test_redis_connect_parsed(self):
+        config = minimal_config(
+            checks=[{"type": "redis_connect", "addr_env": "REDIS"}]
+        )
+        assert isinstance(config.checks[0], RedisConnectCheck)
+
+    def test_redis_smembers_parsed(self):
+        config = minimal_config(
+            checks=[{"type": "redis_smembers", "addr_env": "REDIS", "answers_file": "answers.json"}]
+        )
+        assert isinstance(config.checks[0], RedisSMembersCheck)
 
     def test_unknown_check_type_raises(self):
         with pytest.raises(ValidationError) as exc_info:
@@ -389,6 +425,10 @@ class TestCheckRequiredFields:
     def test_custom_requires_func(self):
         with pytest.raises(ValidationError):
             CustomCheck()
+
+    def test_redis_connect_requires_addr_env(self):
+        with pytest.raises(ValidationError):
+            RedisConnectCheck()
 
 
 class TestLabConfigProperties:
@@ -450,6 +490,18 @@ class TestLabConfigProperties:
         config = minimal_config(checks=[])
         assert config.has_postgres_checks is False
 
+    def test_has_redis_checks_true(self):
+        config = minimal_config(
+            checks=[{"type": "redis_connect", "addr_env": "REDIS"}]
+        )
+        assert config.has_redis_checks is True
+
+    def test_has_redis_compare_checks_true(self):
+        config = minimal_config(
+            checks=[{"type": "redis_smembers", "addr_env": "REDIS", "answers_file": "answers.json"}]
+        )
+        assert config.has_redis_compare_checks is True
+
     def test_has_http_checks_true(self):
         config = minimal_config(
             checks=[{"type": "http_get", "url": "http://localhost"}]
@@ -491,6 +543,12 @@ class TestLabConfigProperties:
     def test_has_context_with_postgres(self):
         config = minimal_config(
             checks=[{"type": "postgres_connect", "postgres_url_env": "DB"}]
+        )
+        assert config.has_context is True
+
+    def test_has_context_with_redis(self):
+        config = minimal_config(
+            checks=[{"type": "redis_connect", "addr_env": "REDIS"}]
         )
         assert config.has_context is True
 

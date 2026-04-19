@@ -298,6 +298,23 @@ class TestConditionalImports:
         assert '"flag"' in code
         assert "flag.Parse()" in code
 
+    def test_has_redis_import_with_redis_check(self, generator):
+        config = minimal_config(
+            checks=[{"type": "redis_connect", "addr_env": "REDIS"}]
+        )
+        code = generator.generate(config)
+        assert "github.com/go-redis/redis/v8" in code
+
+    def test_has_progressbar_import_with_redis_compare_check(self, generator):
+        config = minimal_config(
+            embedded_data=[{"name": "answers", "file": "answers.json"}],
+            checks=[
+                {"type": "redis_smembers", "addr_env": "REDIS", "answers_file": "answers.json"}
+            ],
+        )
+        code = generator.generate(config)
+        assert "github.com/schollz/progressbar/v3" in code
+
     def test_no_strings_import_without_string_checks(self, generator):
         config = minimal_config(checks=[])
         code = generator.generate(config)
@@ -346,6 +363,17 @@ class TestGenerateGoMod:
         config.build.module = "github.com/example/checker"
         gomod = generator.generate_gomod(config)
         assert gomod.endswith("\n")
+
+    def test_adds_redis_requirements_when_needed(self, generator):
+        config = minimal_config(
+            embedded_data=[{"name": "answers", "file": "answers.json"}],
+            checks=[
+                {"type": "redis_smembers", "addr_env": "REDIS", "answers_file": "answers.json"}
+            ],
+        )
+        gomod = generator.generate_gomod(config)
+        assert "github.com/go-redis/redis/v8" in gomod
+        assert "github.com/schollz/progressbar/v3" in gomod
 
 
 class TestGenerateToFile:

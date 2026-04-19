@@ -28,6 +28,15 @@ CHECK_TYPE_HELPERS: dict[str, list[str]] = {
     "postgres_tables_empty": ["checks/postgres_tables_empty_helpers.go.j2"],
     "clickhouse_query_simple": ["checks/clickhouse_query_simple_helpers.go.j2"],
     "kafka_to_clickhouse": ["checks/kafka_to_clickhouse_helpers.go.j2"],
+    "redis_connect": ["checks/redis_helpers.go.j2"],
+    "redis_smembers": [
+        "checks/redis_helpers.go.j2",
+        "checks/redis_smembers_helpers.go.j2",
+    ],
+    "redis_zrange": [
+        "checks/redis_helpers.go.j2",
+        "checks/redis_zrange_helpers.go.j2",
+    ],
 }
 
 # Each check type declares which Go stdlib imports it needs.
@@ -54,6 +63,13 @@ CHECK_TYPE_STDLIB_IMPORTS: dict[str, set[str]] = {
     "kafka_to_clickhouse": {
         "context", "os/signal", "encoding/json", "fmt", "math",
         "net/http", "net/url", "io", "bufio", "strings", "time", "bytes",
+    },
+    "redis_connect": {"context", "os/signal", "strings", "time"},
+    "redis_smembers": {
+        "context", "os/signal", "bytes", "encoding/json", "sort", "strings", "time",
+    },
+    "redis_zrange": {
+        "context", "os/signal", "bytes", "encoding/json", "strings", "time",
     },
 }
 
@@ -523,6 +539,87 @@ class PostgresTablesEmptyCheck(BaseCheck):
     on_start: str = Field(default="", description="Analytics event when check starts")
 
 
+class RedisConnectCheck(BaseCheck):
+    """Connect to Redis and verify it responds to PING."""
+
+    type: Literal["redis_connect"] = "redis_connect"
+    addr_env: str = Field(
+        description="Env var name containing Redis host:port"
+    )
+    url_env: str = Field(
+        default="",
+        description="Env var name containing full Redis URL (takes priority over addr_env)",
+    )
+    timeout_seconds: int = Field(
+        default=10,
+        description="Timeout for the PING request",
+    )
+
+
+class RedisSMembersCheck(BaseCheck):
+    """Validate Redis SET contents against expected data from a JSON answer file."""
+
+    type: Literal["redis_smembers"] = "redis_smembers"
+    addr_env: str = Field(
+        description="Env var name containing Redis host:port"
+    )
+    url_env: str = Field(
+        default="",
+        description="Env var name containing full Redis URL (takes priority over addr_env)",
+    )
+    answers_file: str = Field(
+        description="JSON file with key->string[] mappings (must match an embedded_data entry)"
+    )
+    timeout_per_key_seconds: int = Field(
+        default=10,
+        description="Timeout for each SMEMBERS call",
+    )
+    message_wrong_count: str = Field(
+        default="Ожидаю другое количество элементов для {key}: хочу {expected}, получил {actual}",
+        description="Error message when set cardinality differs. Placeholders: {key}, {expected}, {actual}",
+    )
+    message_wrong_value: str = Field(
+        default="Ожидаю другие значения для {key}",
+        description="Error message when set contents differ. Placeholders: {key}",
+    )
+    message_key_missing: str = Field(
+        default="Ключ {key} не найден в Redis",
+        description="Error message when key doesn't exist. Placeholders: {key}",
+    )
+
+
+class RedisZRangeCheck(BaseCheck):
+    """Validate Redis SORTED SET contents against expected data from a JSON answer file."""
+
+    type: Literal["redis_zrange"] = "redis_zrange"
+    addr_env: str = Field(
+        description="Env var name containing Redis host:port"
+    )
+    url_env: str = Field(
+        default="",
+        description="Env var name containing full Redis URL (takes priority over addr_env)",
+    )
+    answers_file: str = Field(
+        description="JSON file with key->ordered string[] mappings (must match an embedded_data entry)"
+    )
+    timeout_per_key_seconds: int = Field(
+        default=10,
+        description="Timeout for each ZRANGE call",
+    )
+    message_wrong_count: str = Field(
+        default="Ожидаю другое количество элементов для {key}: хочу {expected}, получил {actual}",
+        description="Error message when sorted set cardinality differs. Placeholders: {key}, {expected}, {actual}",
+    )
+    message_wrong_value: str = Field(
+        default="Ожидаю другие значения для {key}",
+        description="Error message when sorted set contents or order differ. Placeholders: {key}",
+    )
+    message_key_missing: str = Field(
+        default="Ключ {key} не найден в Redis",
+        description="Error message when key doesn't exist. Placeholders: {key}",
+    )
+
+
 # --- Custom Check ---
 
 
@@ -690,6 +787,9 @@ Check = Annotated[
     | KafkaCompareCheck
     | PostgresConnectCheck
     | PostgresTablesEmptyCheck
+    | RedisConnectCheck
+    | RedisSMembersCheck
+    | RedisZRangeCheck
     | ClickhouseQuerySimpleCheck
     | KafkaToClickhouseCheck
     | CustomCheck
@@ -781,6 +881,17 @@ class LabConfig(BaseModel):
         )
 
     @property
+    def has_redis_checks(self) -> bool:
+        return any(
+            c.type in ("redis_connect", "redis_smembers", "redis_zrange")
+            for c in self.checks
+        )
+
+    @property
+    def has_redis_compare_checks(self) -> bool:
+        return any(c.type in ("redis_smembers", "redis_zrange") for c in self.checks)
+
+    @property
     def has_clickhouse_simple_checks(self) -> bool:
         return any(c.type == "clickhouse_query_simple" for c in self.checks)
 
@@ -820,6 +931,7 @@ class LabConfig(BaseModel):
             or self.has_http_batch_checks
             or self.has_kafka_checks
             or self.has_postgres_checks
+            or self.has_redis_checks
             or self.has_custom_checks
             or self.has_kafka_to_clickhouse_checks
         )
@@ -890,7 +1002,20 @@ class LabConfig(BaseModel):
             auto.add("trekker:infra")
         if self.has_masked_fields:
             auto.add("trekker:utils")
+        if self.has_redis_checks:
+            auto.add("github.com/go-redis/redis/v8")
+        if self.has_redis_compare_checks:
+            auto.add("github.com/schollz/progressbar/v3")
         return auto
+
+    def get_embedded_var_by_file(self, filename: str) -> str:
+        """Get embedded variable name by file path or fallback to filename stem."""
+        for ed in self.embedded_data:
+            if ed.file == filename:
+                return f"{ed.name}Data"
+        stem = filename.removesuffix(".json").removesuffix(".jsonl")
+        stem = stem.replace("/", "_").replace("-", "_")
+        return f"{stem}Data"
 
     def get_filtered_imports(self) -> list[str]:
         """Custom imports minus auto-generated ones."""

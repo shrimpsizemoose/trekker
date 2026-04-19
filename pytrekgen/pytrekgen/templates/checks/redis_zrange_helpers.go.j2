@@ -1,0 +1,94 @@
+
+type redisZRangeEntry struct {
+	key    string
+	values []string
+}
+
+func redisZRangeLoadAnswers(data []byte) ([]redisZRangeEntry, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, fmt.Errorf("не могу распарсить файл ответов: %w", err)
+	}
+	delim, ok := tok.(json.Delim)
+	if !ok || delim != '{' {
+		return nil, fmt.Errorf("файл ответов должен быть JSON-объектом")
+	}
+
+	entries := make([]redisZRangeEntry, 0)
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return nil, fmt.Errorf("не могу прочитать ключ из файла ответов: %w", err)
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return nil, fmt.Errorf("ожидаю строковый ключ в файле ответов")
+		}
+
+		var vals []string
+		if err := dec.Decode(&vals); err != nil {
+			return nil, fmt.Errorf("не могу прочитать значения для ключа %s: %w", key, err)
+		}
+		entries = append(entries, redisZRangeEntry{key: key, values: vals})
+	}
+
+	if _, err := dec.Token(); err != nil {
+		return nil, fmt.Errorf("не могу завершить чтение файла ответов: %w", err)
+	}
+
+	return entries, nil
+}
+
+func redisZRangeCheck(
+	ctx context.Context,
+	redisCli *redis.Client,
+	answersData []byte,
+	timeoutPerKey time.Duration,
+	messageWrongCount string,
+	messageWrongValue string,
+	messageKeyMissing string,
+) error {
+	entries, err := redisZRangeLoadAnswers(answersData)
+	if err != nil {
+		return err
+	}
+
+	bar := progressbar.Default(int64(len(entries)), "Проверяю Redis ZRANGE")
+	for _, entry := range entries {
+		rCtx, cancel := context.WithTimeout(ctx, timeoutPerKey)
+		exists, err := redisCli.Exists(rCtx, entry.key).Result()
+		cancel()
+		if err != nil {
+			return fmt.Errorf("не могу проверить ключ %s: %w", entry.key, err)
+		}
+		if exists == 0 {
+			return fmt.Errorf("%s", redisFormatMessage(messageKeyMissing, entry.key, 0, 0))
+		}
+
+		rCtx, cancel = context.WithTimeout(ctx, timeoutPerKey)
+		actual, err := redisCli.ZRange(rCtx, entry.key, 0, -1).Result()
+		cancel()
+		if err != nil {
+			return fmt.Errorf("не могу прочитать ключ %s: %w", entry.key, err)
+		}
+
+		expected := entry.values
+		if len(actual) != len(expected) {
+			return fmt.Errorf(
+				"%s",
+				redisFormatMessage(messageWrongCount, entry.key, len(expected), len(actual)),
+			)
+		}
+
+		for i := range expected {
+			if actual[i] != expected[i] {
+				return fmt.Errorf("%s", redisFormatMessage(messageWrongValue, entry.key, len(expected), len(actual)))
+			}
+		}
+
+		_, _ = bar.Add(1)
+	}
+
+	return nil
+}

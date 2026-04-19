@@ -1,0 +1,18 @@
+	redisCli, err := redisConnect("{{ check.addr_env | prefixed_env(config.env_prefix) }}", "{{ check.url_env | prefixed_env(config.env_prefix) }}")
+	if err != nil {
+		logger.Error.Fatal(err)
+	}
+	defer redisCli.Close()
+
+	rCtx, cancel := context.WithTimeout(rootCtx, {{ check.timeout_seconds }}*time.Second)
+	defer cancel()
+
+	if err := redisCli.Ping(rCtx).Err(); err != nil {
+{% if check.on_failure.event %}
+		tracker.Ping("{{ check.on_failure.event }}", nil)
+{% endif %}
+		logger.Error.Fatalf("{{ check.on_failure.message if check.on_failure.message else 'Redis не отвечает на PING' }}: %v", err)
+	}
+{% if check.on_success.event %}
+	tracker.Ping("{{ check.on_success.event }}", nil)
+{% endif %}

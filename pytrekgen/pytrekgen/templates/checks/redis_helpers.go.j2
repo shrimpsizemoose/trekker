@@ -1,0 +1,28 @@
+
+func redisConnect(addrEnv, urlEnv string) (*redis.Client, error) {
+	urlVal := strings.TrimSpace(os.Getenv(urlEnv))
+	addrVal := strings.TrimSpace(os.Getenv(addrEnv))
+
+	if urlVal != "" {
+		opts, err := redis.ParseURL(urlVal)
+		if err != nil {
+			return nil, fmt.Errorf("не могу распарсить Redis URL: %w", err)
+		}
+		return redis.NewClient(opts), nil
+	}
+
+	if addrVal != "" {
+		return redis.NewClient(&redis.Options{Addr: addrVal}), nil
+	}
+
+	return nil, fmt.Errorf("нужен %s или %s", addrEnv, urlEnv)
+}
+
+func redisFormatMessage(template, key string, expected, actual int) string {
+	replacer := strings.NewReplacer(
+		"{key}", key,
+		"{expected}", fmt.Sprintf("%d", expected),
+		"{actual}", fmt.Sprintf("%d", actual),
+	)
+	return replacer.Replace(template)
+}
