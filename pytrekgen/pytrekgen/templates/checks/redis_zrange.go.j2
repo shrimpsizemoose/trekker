@@ -1,18 +1,20 @@
-	redisCli, err := redisConnect("{{ check.addr_env | prefixed_env(config.env_prefix) }}", "{{ check.url_env | prefixed_env(config.env_prefix) }}")
-	if err != nil {
-		logger.Error.Fatal(err)
-	}
-	defer redisCli.Close()
+	if err := func() error {
+		redisCli, err := redisConnect("{{ check.addr_env | prefixed_env(config.env_prefix) }}", "{{ check.url_env | prefixed_env(config.env_prefix) }}")
+		if err != nil {
+			return err
+		}
+		defer redisCli.Close()
 
-	if err := redisZRangeCheck(
-		rootCtx,
-		redisCli,
-		{{ config.get_embedded_var_by_file(check.answers_file) }},
-		{{ check.timeout_per_key_seconds }}*time.Second,
-		"{{ check.message_wrong_count }}",
-		"{{ check.message_wrong_value }}",
-		"{{ check.message_key_missing }}",
-	); err != nil {
+		return redisZRangeCheck(
+			rootCtx,
+			redisCli,
+			{{ config.get_embedded_var_by_file(check.answers_file) }},
+			{{ check.timeout_per_key_seconds }}*time.Second,
+			"{{ check.message_wrong_count }}",
+			"{{ check.message_wrong_value }}",
+			"{{ check.message_key_missing }}",
+		)
+	}(); err != nil {
 {% if check.on_failure.event %}
 		tracker.Ping("{{ check.on_failure.event }}", nil)
 {% endif %}
