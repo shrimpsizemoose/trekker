@@ -139,7 +139,7 @@ func (a *Analytics) sendEvent(eventType string, additionalData map[string]string
 		}
 		return fmt.Errorf("🔒 Эта версия чекера устарела. Скачай свежий образ и попробуй снова.")
 	}
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		if a.verbose {
 			logger.Error.Printf("Ответ сервера:\n  %s", respBody)
 		}
