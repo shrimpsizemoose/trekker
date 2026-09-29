@@ -363,7 +363,6 @@ func main() {
 {% endif %}
 {% endfor %}
 	logger.Info.Println("----------------------------------------")
-	logger.Victory.Println("{{ config.success_message }}")
-
 	tracker.PingFinish()
+	logger.Victory.Println("{{ config.success_message }}")
 }
