@@ -1,0 +1,195 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestExactComparison(t *testing.T) {
+	columns := map[string]string{"id": "string", "v": "decimal", "n": "integer", "b": "boolean"}
+	expected, err := ccParse([]byte(`{"id":"a","v":833.670,"n":9007199254740993,"b":true}`), columns, []string{"id"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := `{"id":"a","v":"833.67","n":"9007199254740993","b":true,"extra":12}`
+	actual, err := ccParse([]byte(good), columns, []string{"id"})
+	if err != nil || ccDiff(expected, actual) != "" {
+		t.Fatalf("expected exact match: %v %s", err, ccDiff(expected, actual))
+	}
+	cases := []struct {
+		name, data, want string
+		parseError       bool
+	}{
+		{"large integer differs", strings.Replace(good, "9007199254740993", "9007199254740992", 1), "field \"n\"", false},
+		{"decimal differs", strings.Replace(good, "833.67", "833.670000000000000001", 1), "field \"v\"", false},
+		{"null differs", strings.Replace(good, `"833.67"`, "null", 1), "field \"v\"", false},
+		{"missing row", "", "missing row", false},
+		{"unexpected row", good + "\n" + strings.Replace(good, `"a"`, `"b"`, 1), "unexpected row", false},
+		{"duplicate row", good + "\n" + good, "duplicate key", true},
+		{"missing field", strings.Replace(good, `"v":"833.67",`, "", 1), "missing field", true},
+		{"bad integer", strings.Replace(good, `"9007199254740993"`, `"nope"`, 1), "invalid integer", true},
+		{"wrong boolean", strings.Replace(good, `true`, `"true"`, 1), "invalid boolean", true},
+		{"wrong string", strings.Replace(good, `"id":"a"`, `"id":12`, 1), "invalid string", true},
+		{"malformed", good + "\n{", "invalid JSON", true},
+		{"non object", "[]", "invalid JSON", true},
+		{"null row", "null", "expected an object", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := ccParse([]byte(tc.data), columns, []string{"id"})
+			if tc.parseError {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("want %s, got %v", tc.want, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if diff := ccDiff(expected, rows); !strings.Contains(diff, tc.want) {
+					t.Fatalf("want %s, got %s", tc.want, diff)
+				}
+			}
+		})
+	}
+}
+
+func TestNullZeroAndCompositeKeys(t *testing.T) {
+	columns := map[string]string{"a": "string", "b": "string", "v": "integer"}
+	data := "{\"a\":\"a_b\",\"b\":\"c\",\"v\":null}\n{\"a\":\"a\",\"b\":\"b_c\",\"v\":0}"
+	rows, err := ccParse([]byte(data), columns, []string{"a", "b"})
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("composite key collision: %v", err)
+	}
+	same, _ := ccParse([]byte(data), columns, []string{"a", "b"})
+	if ccDiff(rows, same) != "" {
+		t.Fatal("NULL must equal NULL")
+	}
+	changed, _ := ccParse([]byte(strings.Replace(data, "null", "0", 1)), columns, []string{"a", "b"})
+	if ccDiff(rows, changed) == "" {
+		t.Fatal("NULL must not equal zero")
+	}
+	empty, err := ccParse(nil, columns, []string{"a", "b"})
+	if err != nil || ccDiff(empty, empty) != "" {
+		t.Fatal("empty result must match empty expectation")
+	}
+}
+
+func options(addr string) ccOptions {
+	return ccOptions{Addr: addr, Query: "SELECT {dataset:String}", Columns: map[string]string{"id": "string", "v": "integer"}, MatchBy: []string{"id"}, RequestTimeout: time.Second, PollInterval: time.Millisecond}
+}
+
+func TestQueryAndConvergence(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Error("expected POST")
+		}
+		if r.URL.Query().Get("param_dataset") != "a'b&x" || r.URL.Query().Get("readonly") != "1" || r.URL.Query().Get("default_format") != "JSONEachRow" {
+			t.Error("query parameters lost")
+		}
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "student" || pass != "secret" {
+			t.Error("missing credentials")
+		}
+		body, _ := io.ReadAll(r.Body)
+		if string(body) != "SELECT {dataset:String}" {
+			t.Error("SQL was interpolated")
+		}
+		v := 0
+		if calls.Add(1) >= 3 {
+			v = 10
+		}
+		fmt.Fprintf(w, `{"id":"x","v":%d}`, v)
+	}))
+	defer server.Close()
+	opts := options(strings.TrimPrefix(server.URL, "http://"))
+	opts.User = "student"
+	opts.Pass = "secret"
+	opts.Params = map[string]string{"dataset": "a'b&x"}
+	opts.Timeout = time.Second
+	if err := clickhouseCompare(context.Background(), opts, []byte(`{"id":"x","v":10}`)); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("want 3 attempts, got %d", calls.Load())
+	}
+}
+
+func TestRetryBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		code       int
+		timeout    time.Duration
+		want       string
+		multiple   bool
+	}{
+		{"once", `{"id":"x","v":0}`, 200, 0, "expected integer:10", false},
+		{"deadline", `{"id":"x","v":0}`, 200, 200 * time.Millisecond, "last mismatch", true},
+		{"sql error", "unknown table", 400, time.Second, "HTTP 400", false},
+		{"server error", "failed", 500, time.Second, "HTTP 500", false},
+		{"schema error", `{"id":"x"}`, 200, time.Second, "missing field", false},
+		{"duplicate", `{"id":"x","v":10}` + "\n" + `{"id":"x","v":10}`, 200, time.Second, "duplicate key", false},
+		{"bad JSON", "{", 200, time.Second, "invalid JSON", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(tc.code)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			opts := options(strings.TrimPrefix(server.URL, "http://"))
+			opts.Timeout = tc.timeout
+			err := clickhouseCompare(context.Background(), opts, []byte(`{"id":"x","v":10}`))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %s, got %v", tc.want, err)
+			}
+			if tc.multiple && calls.Load() < 2 || !tc.multiple && calls.Load() != 1 {
+				t.Fatalf("wrong attempt count %d", calls.Load())
+			}
+		})
+	}
+}
+
+func TestCancellationAndRequestDeadline(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+	opts := options(strings.TrimPrefix(server.URL, "http://"))
+	opts.RequestTimeout = 30 * time.Millisecond
+	start := time.Now()
+	if err := clickhouseCompare(context.Background(), opts, []byte(`{"id":"x","v":1}`)); err == nil {
+		t.Fatal("request must time out")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("request exceeded deadline")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := clickhouseCompare(ctx, opts, nil); err == nil {
+		t.Fatal("cancelled request succeeded")
+	}
+}
+
+func TestExpectedErrorsBeforeHTTP(t *testing.T) {
+	opts := options("invalid:1")
+	err := clickhouseCompare(context.Background(), opts, []byte("{bad"))
+	if err == nil || !strings.Contains(err.Error(), "expected result") {
+		t.Fatalf("bad expectation was not rejected: %v", err)
+	}
+}

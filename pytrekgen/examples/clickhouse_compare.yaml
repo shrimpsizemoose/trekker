@@ -1,0 +1,40 @@
+lab:
+  id: clickhouse_metrics
+  name: ClickHouse metric comparison
+  env_prefix: NPL
+build:
+  module: github.com/test/clickhouse-compare-checker
+analytics:
+  offline: true
+required_env:
+  - {name: CH_ADDR, error: "Set ClickHouse HTTP host:port"}
+  - {name: EXPECTED_METRICS, error: "Set the runtime path to expected JSONL"}
+  - {name: DATASET_ID, error: "Set dataset_id"}
+checks:
+  - type: clickhouse_compare
+    name: paid_metrics
+    clickhouse_addr_env: CH_ADDR
+    query: |
+      SELECT dataset_id, paid_orders_count, avg_paid_amount_cents
+      FROM lab02.metrics_summary(
+        p_dataset_id = {dataset_id:String},
+        p_from = {from_time:String},
+        p_to = {to_time:String},
+        p_campaign_id = ''
+      )
+    params:
+      dataset_id: "${DATASET_ID}"
+      from_time: "2026-01-01T00:00:00.000Z"
+      to_time: "2026-01-02T00:00:00.000Z"
+    expected_file_env: EXPECTED_METRICS
+    match_by: [dataset_id]
+    columns:
+      dataset_id: string
+      paid_orders_count: integer
+      avg_paid_amount_cents: decimal
+    timeout_seconds: 30
+    request_timeout_seconds: 5
+    poll_interval_ms: 500
+    message_success: "Metrics match"
+    on_failure: {event: metrics_failed, message: "Metrics did not match"}
+    on_success: {event: metrics_verified}

@@ -196,6 +196,74 @@ jobs:
           tags: ghcr.io/${{ github.repository }}/lab-02:${{ github.sha }}
 ```
 
+## Сравнение результатов ClickHouse
+
+`clickhouse_compare` выполняет запрос в режиме read-only и сравнивает ответ
+JSONEachRow с ожидаемыми строками из JSONL-файла.
+
+```yaml
+- type: clickhouse_compare
+  name: metrics
+  clickhouse_addr_env: CH_ADDR
+  query: |
+    SELECT dataset_id, paid_orders_count, avg_paid_amount_cents
+    FROM metrics WHERE dataset_id = {dataset_id:String}
+  params:
+    dataset_id: "${DATASET_ID}"
+  expected_file_env: EXPECTED_METRICS
+  match_by: [dataset_id]
+  columns:
+    dataset_id: string
+    paid_orders_count: integer
+    avg_paid_amount_cents: decimal
+  timeout_seconds: 30
+  request_timeout_seconds: 5
+  poll_interval_ms: 500
+```
+
+Файл с ожидаемым результатом для этого запроса:
+
+```json
+{"dataset_id":"demo","paid_orders_count":4,"avg_paid_amount_cents":875.25}
+```
+
+При `env_prefix: NPL` задайте `NPL_CH_ADDR` (HTTP host:port), `NPL_DATASET_ID`
+и `NPL_EXPECTED_METRICS` (путь к файлу). Если имя переменной уже начинается с `NPL_`,
+чекер не добавляет его повторно. Для Basic Auth укажите `clickhouse_user_env`
+и `clickhouse_pass_env`. [Полный конфиг](pytrekgen/examples/clickhouse_compare.yaml).
+
+Чекер передаёт `params` как параметры ClickHouse, отдельно от SQL.
+В значениях он раскрывает `${ENV_VAR}`, остальные `$` оставляет как есть.
+Переменная должна существовать, но может быть пустой.
+
+Укажите один источник ожидаемых строк: `expected_file_env` для пути из переменной
+окружения или `expected_file_jsonl` для файла из `embedded_data`.
+В первом случае файл может создать предыдущая проверка `custom`; чекер прочитает
+его один раз перед запросами. Во втором файл нужен при сборке по пути
+из `//go:embed`, относительно сгенерированного Go-файла.
+
+В `columns` перечислите поля для сравнения и их типы: `string`, `integer`,
+`decimal`, `boolean`. Поля из `match_by` должны входить в `columns`;
+по ним чекер находит соответствующие строки. Порядок строк не влияет на результат,
+лишние поля ответа чекер пропускает. Лишняя или пропущенная строка означает
+расхождение, повтор ключа или отсутствие поля из `columns` вызывает ошибку.
+`NULL` совпадает только с `NULL`. Пустой файл означает ноль строк.
+
+Для `integer` и `decimal` подходят JSON-числа и строки с числами, без
+экспоненциальной записи. В колонке `decimal` значения `833.670` и `"833.67"`
+равны. Чекер сравнивает числа точно, без float и допуска на погрешность;
+если нужно округление, добавьте его в SQL. Для `string` и `boolean`
+нужны JSON-строки и значения `true`/`false` соответственно.
+
+В примере чекер повторяет запрос с паузой 500 мс, пока строки не совпадут,
+но не дольше 30 секунд. При `timeout_seconds: 0` он делает одну попытку.
+`request_timeout_seconds` ограничивает время отдельного запроса.
+Повторы идут только при расхождении строк или значений. Ошибки HTTP, сети,
+JSON, типов, отсутствующие поля и дубли ключей сразу останавливают проверку.
+При общем таймауте чекер выводит последнее расхождение, если оно было.
+
+Оба результата хранятся в памяти; лимит каждого входного файла или ответа — 64 MiB.
+
 ## Зависимости
 
 **pytrekgen (Python):**

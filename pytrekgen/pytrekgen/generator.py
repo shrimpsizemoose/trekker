@@ -1,5 +1,6 @@
 """Code generator using Jinja2 templates."""
 
+import json
 import re
 from io import StringIO
 from pathlib import Path
@@ -31,6 +32,7 @@ class Generator:
         self._register_custom_filters()
 
     def _register_custom_filters(self) -> None:
+        self.env.filters["go_string"] = lambda value: json.dumps(value, ensure_ascii=False)
         self.env.filters["quote"] = self._quote
         self.env.filters["title_case"] = self._title_case
         self.env.filters["lower_camel"] = self._lower_camel
@@ -129,6 +131,9 @@ class Generator:
                 if check.expected:
                     return f"query: {check.query} → {check.expected!r}"
                 return f"query: {check.query} → {check.expected_rows} rows"
+            case "clickhouse_compare":
+                source = check.expected_file_jsonl or f"${{{check.expected_file_env}}}"
+                return f"query CH → {source} [{', '.join(check.match_by)}]"
             case "kafka_to_clickhouse":
                 parts = list(check.match_by)
                 return (

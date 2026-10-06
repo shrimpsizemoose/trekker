@@ -1,0 +1,225 @@
+// Both results stay in memory; cap each input at 64 MiB.
+const ccMaxBytes int64 = 64 << 20
+
+var ccDecimalPattern = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
+var ccIntegerPattern = regexp.MustCompile(`^-?[0-9]+$`)
+var ccEnvPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+type ccRow map[string]string
+
+type ccOptions struct {
+	Addr, User, Pass, Query               string
+	Params                                map[string]string
+	Columns                               map[string]string
+	MatchBy                               []string
+	Timeout, RequestTimeout, PollInterval time.Duration
+}
+
+func ccRead(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, ccMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > ccMaxBytes {
+		return nil, fmt.Errorf("result exceeds %d bytes", ccMaxBytes)
+	}
+	return data, nil
+}
+
+func ccValue(value interface{}, kind string) (string, error) {
+	if value == nil {
+		return "null", nil
+	}
+	switch kind {
+	case "string":
+		if s, ok := value.(string); ok {
+			return "string:" + s, nil
+		}
+	case "boolean":
+		if b, ok := value.(bool); ok {
+			return fmt.Sprintf("boolean:%t", b), nil
+		}
+	case "integer", "decimal":
+		var s string
+		switch v := value.(type) {
+		case json.Number:
+			s = v.String()
+		case string:
+			s = v
+		default:
+			return "", fmt.Errorf("expected %s, got %T", kind, value)
+		}
+		if kind == "integer" && ccIntegerPattern.MatchString(s) {
+			n, ok := new(big.Int).SetString(s, 10)
+			if ok {
+				return "integer:" + n.String(), nil
+			}
+		}
+		if kind == "decimal" && ccDecimalPattern.MatchString(s) {
+			n, ok := new(big.Rat).SetString(s)
+			if ok {
+				return "decimal:" + n.RatString(), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("invalid %s value: %.160v", kind, value)
+}
+
+func ccParse(data []byte, columns map[string]string, matchBy []string) (map[string]ccRow, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	fields := make([]string, 0, len(columns))
+	for field := range columns {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	rows := make(map[string]ccRow)
+	for index := 1; ; index++ {
+		var input map[string]interface{}
+		err := decoder.Decode(&input)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("row %d: invalid JSON: %w", index, err)
+		}
+		if input == nil {
+			return nil, fmt.Errorf("row %d: expected an object", index)
+		}
+		row := make(ccRow, len(columns))
+		for _, field := range fields {
+			value, found := input[field]
+			if !found {
+				return nil, fmt.Errorf("row %d: missing field %q", index, field)
+			}
+			row[field], err = ccValue(value, columns[field])
+			if err != nil {
+				return nil, fmt.Errorf("row %d, field %q: %w", index, field, err)
+			}
+		}
+		parts := make([]string, len(matchBy))
+		for i, field := range matchBy {
+			parts[i] = row[field]
+		}
+		keyBytes, err := json.Marshal(parts)
+		if err != nil {
+			return nil, err
+		}
+		key := string(keyBytes)
+		if _, found := rows[key]; found {
+			return nil, fmt.Errorf("duplicate key %.200s", key)
+		}
+		rows[key] = row
+	}
+	return rows, nil
+}
+
+func ccDiff(expected, actual map[string]ccRow) string {
+	keys := make([]string, 0, len(expected)+len(actual))
+	for key := range expected {
+		keys = append(keys, key)
+	}
+	for key := range actual {
+		if _, exists := expected[key]; !exists {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		want, wantOK := expected[key]
+		got, gotOK := actual[key]
+		if !wantOK {
+			return fmt.Sprintf("unexpected row %.200s (expected %d rows, got %d)", key, len(expected), len(actual))
+		}
+		if !gotOK {
+			return fmt.Sprintf("missing row %.200s (expected %d rows, got %d)", key, len(expected), len(actual))
+		}
+		fields := make([]string, 0, len(want))
+		for field := range want {
+			fields = append(fields, field)
+		}
+		sort.Strings(fields)
+		for _, field := range fields {
+			if want[field] != got[field] {
+				return fmt.Sprintf("key %.200s, field %q: expected %.160s, got %.160s", key, field, want[field], got[field])
+			}
+		}
+	}
+	return ""
+}
+
+func ccQuery(ctx context.Context, opts ccOptions) (map[string]ccRow, error) {
+	ctx, cancel := context.WithTimeout(ctx, opts.RequestTimeout)
+	defer cancel()
+	params := url.Values{
+		"default_format": {"JSONEachRow"},
+		"readonly":       {"1"},
+	}
+	for name, value := range opts.Params {
+		params.Set("param_"+name, value)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+opts.Addr+"/?"+params.Encode(), strings.NewReader(opts.Query))
+	if err != nil {
+		return nil, err
+	}
+	if opts.User != "" || opts.Pass != "" {
+		req.SetBasicAuth(opts.User, opts.Pass)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ClickHouse request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("ClickHouse HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	data, err := ccRead(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("ClickHouse response: %w", err)
+	}
+	rows, err := ccParse(data, opts.Columns, opts.MatchBy)
+	if err != nil {
+		return nil, fmt.Errorf("ClickHouse result: %w", err)
+	}
+	return rows, nil
+}
+
+func clickhouseCompare(ctx context.Context, opts ccOptions, expectedData []byte) error {
+	if int64(len(expectedData)) > ccMaxBytes {
+		return fmt.Errorf("expected result exceeds %d bytes", ccMaxBytes)
+	}
+	expected, err := ccParse(expectedData, opts.Columns, opts.MatchBy)
+	if err != nil {
+		return fmt.Errorf("expected result: %w", err)
+	}
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+	}
+	lastDiff := ""
+	for {
+		actual, err := ccQuery(ctx, opts)
+		if err != nil {
+			if ctx.Err() != nil && lastDiff != "" {
+				return fmt.Errorf("%w; last mismatch: %s", ctx.Err(), lastDiff)
+			}
+			return err
+		}
+		lastDiff = ccDiff(expected, actual)
+		if lastDiff == "" {
+			return nil
+		}
+		if opts.Timeout == 0 {
+			return fmt.Errorf("%s", lastDiff)
+		}
+		timer := time.NewTimer(opts.PollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("%w; last mismatch: %s", ctx.Err(), lastDiff)
+		case <-timer.C:
+		}
+	}
+}

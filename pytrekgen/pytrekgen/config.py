@@ -1,5 +1,6 @@
 """Pydantic models for lab checker configuration."""
 
+import re
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -27,6 +28,7 @@ CHECK_TYPE_HELPERS: dict[str, list[str]] = {
     "kafka_compare": ["checks/kafka_compare_helpers.go.j2"],
     "postgres_tables_empty": ["checks/postgres_tables_empty_helpers.go.j2"],
     "clickhouse_query_simple": ["checks/clickhouse_query_simple_helpers.go.j2"],
+    "clickhouse_compare": ["checks/clickhouse_compare_helpers.go.j2"],
     "kafka_to_clickhouse": ["checks/kafka_to_clickhouse_helpers.go.j2"],
     "redis_connect": ["checks/redis_helpers.go.j2"],
     "redis_smembers": [
@@ -60,6 +62,10 @@ CHECK_TYPE_STDLIB_IMPORTS: dict[str, set[str]] = {
     "postgres_tables_empty": {"context", "os/signal", "database/sql"},
     "custom": {"context", "os/signal"},
     "clickhouse_query_simple": {"net/http", "net/url", "io", "strings"},
+    "clickhouse_compare": {
+        "context", "os/signal", "net/http", "net/url", "io", "strings",
+        "encoding/json", "bytes", "math/big", "regexp", "sort", "time",
+    },
     "kafka_to_clickhouse": {
         "context", "os/signal", "encoding/json", "fmt", "math",
         "net/http", "net/url", "io", "bufio", "strings", "time", "bytes",
@@ -668,6 +674,78 @@ class ClickhouseQuerySimpleCheck(BaseCheck):
         return self
 
 
+class ClickhouseCompareCheck(BaseCheck):
+    """Compare ClickHouse JSONEachRow output with an expected JSONL file.
+
+    Compare numbers exactly, accepting JSON numbers and numeric strings without
+    exponent notation. NULL matches only NULL. Retry unequal values or extra/missing
+    rows; HTTP, network, JSON, type, missing-field and duplicate-key errors stop the check.
+    Keep both results in memory, with a 64 MiB limit per input.
+    """
+
+    type: Literal["clickhouse_compare"] = "clickhouse_compare"
+    clickhouse_addr_env: str
+    clickhouse_user_env: str = ""
+    clickhouse_pass_env: str = ""
+    query: str = Field(
+        min_length=1,
+        description=(
+            "Read-only SQL with typed ClickHouse parameters. "
+            "Default output format: JSONEachRow."
+        ),
+    )
+    params: dict[str, str] = Field(
+        default_factory=dict,
+        description="Query parameter values; ${ENV_VAR} reads an environment variable with the lab prefix.",
+    )
+    expected_file_jsonl: str = Field(
+        default="",
+        description="Expected JSONL file from embedded_data. Set this or expected_file_env, not both.",
+    )
+    expected_file_env: str = Field(
+        default="",
+        description=(
+            "Environment variable containing the expected JSONL file path. "
+            "The file is read once before the first query; a previous custom check can create it."
+        ),
+    )
+    match_by: list[str] = Field(
+        min_length=1,
+        description="Columns that identify a row. Each must be listed in columns.",
+    )
+    columns: dict[str, Literal["string", "integer", "decimal", "boolean"]] = Field(
+        min_length=1,
+        description=(
+            "Fields to compare and their types. "
+            "Missing fields cause an error; extra fields are ignored."
+        ),
+    )
+    timeout_seconds: int = Field(
+        default=0,
+        ge=0,
+        le=86400,
+        description="Seconds to retry until rows match; 0 means one attempt.",
+    )
+    request_timeout_seconds: int = Field(default=10, gt=0, le=86400)
+    poll_interval_ms: int = Field(default=500, gt=0, le=86400000)
+    message_before: str = ""
+    message_success: str = ""
+
+    @model_validator(mode="after")
+    def validate_comparison(self) -> "ClickhouseCompareCheck":
+        if bool(self.expected_file_jsonl) == bool(self.expected_file_env):
+            raise ValueError("exactly one of expected_file_jsonl or expected_file_env must be set")
+        if len(set(self.match_by)) != len(self.match_by):
+            raise ValueError("match_by must not contain duplicates")
+        if not set(self.match_by) <= self.columns.keys():
+            raise ValueError("all match_by fields must be declared in columns")
+        if any(not name for name in self.columns):
+            raise ValueError("column names must not be empty")
+        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in self.params):
+            raise ValueError("invalid ClickHouse parameter name")
+        return self
+
+
 class KafkaToClickhouseCheck(BaseCheck):
     """Send JSONL to Kafka, wait, query ClickHouse with FINAL, compare multi-row results."""
 
@@ -791,6 +869,7 @@ Check = Annotated[
     | RedisSMembersCheck
     | RedisZRangeCheck
     | ClickhouseQuerySimpleCheck
+    | ClickhouseCompareCheck
     | KafkaToClickhouseCheck
     | CustomCheck
     | BranchFlagCheck,
@@ -934,6 +1013,7 @@ class LabConfig(BaseModel):
             or self.has_redis_checks
             or self.has_custom_checks
             or self.has_kafka_to_clickhouse_checks
+            or any(c.type == "clickhouse_compare" for c in self.checks)
         )
 
     def get_confirm_fields(self) -> list[ConfirmField]:
@@ -1028,6 +1108,15 @@ class LabConfig(BaseModel):
             if check.name == name:
                 return check
         raise ValueError(f"check '{name}' not found")
+
+    @model_validator(mode="after")
+    def validate_clickhouse_compare_files(self) -> "LabConfig":
+        files = {entry.file for entry in self.embedded_data}
+        for check in self.checks:
+            if check.type == "clickhouse_compare" and check.expected_file_jsonl:
+                if check.expected_file_jsonl not in files:
+                    raise ValueError("clickhouse_compare expected_file_jsonl must be listed in embedded_data")
+        return self
 
     @model_validator(mode="after")
     def validate_branch_flags(self) -> "LabConfig":
