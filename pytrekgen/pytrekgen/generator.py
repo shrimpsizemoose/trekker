@@ -95,6 +95,12 @@ class Generator:
                 return f"{check.env_var} == {check.expected!r}{cmp}"
             case "forbidden_address":
                 return f"{check.env_var} not in [{', '.join(check.forbidden)}]"
+            case "confirm":
+                return check.message
+            case "prometheus_query":
+                return f"{check.query} {check.operator} {check.expected}"
+            case "prometheus_alert":
+                return f"{check.alert}: {check.state}"
             case "wait":
                 return f"wait {check.seconds}s"
             case "http_get":
@@ -232,14 +238,14 @@ class Generator:
         """
         vars_found = re.findall(r"\$\{([^}]+)\}", url)
         if not vars_found:
-            return f'"{url}"'
+            return json.dumps(url, ensure_ascii=False)
 
-        format_str = re.sub(r"\$\{[^}]+\}", "%s", url)
+        format_str = re.sub(r"\$\{[^}]+\}", "%s", url.replace("%", "%%"))
         getenvs = ", ".join(
-            f'os.Getenv("{env_prefix}_{var}")' if env_prefix else f'os.Getenv("{var}")'
+            f'os.Getenv({json.dumps(Generator._prefixed_env(var, env_prefix))})'
             for var in vars_found
         )
-        return f'fmt.Sprintf("{format_str}", {getenvs}, )'
+        return f'fmt.Sprintf({json.dumps(format_str, ensure_ascii=False)}, {getenvs}, )'
 
     @classmethod
     def load_config(cls, config_path: Path, overrides: dict | None = None) -> LabConfig:

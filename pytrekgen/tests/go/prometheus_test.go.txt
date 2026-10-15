@@ -1,0 +1,162 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestValues(t *testing.T) {
+	for _, tc := range []struct {
+		result, op     string
+		expected       float64
+		match, invalid bool
+	}{
+		{`{"resultType":"scalar","result":[1,"0"]}`, "==", 0, true, false},
+		{`{"resultType":"scalar","result":[1,"-1.5"]}`, "!=", 0, true, false},
+		{`{"resultType":"vector","result":[{"value":[1,"2"]}]}`, ">", 1, true, false},
+		{`{"resultType":"scalar","result":[1,"2"]}`, ">=", 2, true, false},
+		{`{"resultType":"scalar","result":[1,"-2"]}`, "<", 0, true, false},
+		{`{"resultType":"scalar","result":[1,"2"]}`, "<=", 2, true, false},
+		{`{"resultType":"scalar","result":[1,"2"]}`, "==", 1, false, false},
+		{`{"resultType":"vector","result":[]}`, "==", 0, false, false},
+		{`{"resultType":"vector","result":[{},{}]}`, "==", 0, false, true},
+		{`{"resultType":"vector","result":null}`, "==", 0, false, true},
+		{`{"resultType":"matrix","result":[]}`, "==", 0, false, true},
+		{`{"resultType":"string","result":[1,"0"]}`, "==", 0, false, true},
+		{`{"resultType":"scalar","result":[1]}`, "==", 0, false, true},
+		{`{"resultType":"scalar","result":[null,"0"]}`, "==", 0, false, true},
+		{`{"resultType":"scalar","result":[1,0]}`, "==", 0, false, true},
+		{`{"resultType":"scalar","result":[1,"NaN"]}`, "==", 0, false, true},
+		{`{"resultType":"scalar","result":[1,"+Inf"]}`, "==", 0, false, true},
+		{`{"resultType":"scalar","result":[1,"bad"]}`, "==", 0, false, true},
+		{`{`, "==", 0, false, true},
+	} {
+		t.Run(tc.result+tc.op, func(t *testing.T) {
+			match, _, err := prometheusValue(json.RawMessage(tc.result), tc.op, tc.expected)
+			if match != tc.match || (err != nil) != tc.invalid {
+				t.Fatalf("match=%v err=%v", match, err)
+			}
+		})
+	}
+}
+
+func rules(state, health string) string {
+	return fmt.Sprintf(`{"groups":[{"rules":[{"type":"alerting","name":"Api","state":%q,"health":%q,"lastError":"evaluation failed"}]}]}`, state, health)
+}
+
+func TestRules(t *testing.T) {
+	for _, state := range []string{"inactive", "pending", "firing"} {
+		ok, _, err := prometheusRule(json.RawMessage(rules(state, "ok")), "Api", state)
+		if !ok || err != nil {
+			t.Fatal(ok, err)
+		}
+	}
+	for _, data := range []string{rules("pending", "ok"), rules("inactive", "err"), `{"groups":[]}`} {
+		ok, last, err := prometheusRule(json.RawMessage(data), "Api", "inactive")
+		if ok || err != nil || last == "" {
+			t.Fatal(ok, last, err)
+		}
+	}
+	duplicate := `{"groups":[{"rules":[{"type":"alerting","name":"Api"},{"type":"alerting","name":"Api"}]}]}`
+	if _, _, err := prometheusRule(json.RawMessage(duplicate), "Api", "inactive"); err == nil {
+		t.Fatal("duplicate accepted")
+	}
+}
+
+func TestHTTP(t *testing.T) {
+	query := `sum(rate(foo{job=~"a+b\\c"}[5m])) + vector(0)`
+	for _, tc := range []struct {
+		status         int
+		body           string
+		retry, invalid bool
+	}{
+		{200, `{"status":"success","data":{"resultType":"scalar","result":[1,"1"]}}`, false, false},
+		{429, "", true, false}, {500, "", true, false}, {503, "", true, false},
+		{302, "", false, true}, {400, "", false, true}, {401, "", false, true}, {404, "", false, true},
+		{200, `{"status":"error","error":"bad"}`, false, true}, {200, `{`, false, true},
+	} {
+		t.Run(fmt.Sprint(tc.status, tc.body), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/base/api/v1/query" || r.URL.Query().Get("query") != query {
+					t.Error(r.URL)
+				}
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			// Exercise URL construction and deadline as well as response classification.
+			err := prometheusWait(context.Background(), server.URL+"/base/", 30*time.Millisecond, query, "==", 1, "", "")
+			if tc.retry {
+				if err == nil || !strings.Contains(err.Error(), "last: HTTP") {
+					t.Fatal(err)
+				}
+			} else if (err != nil) != tc.invalid {
+				t.Fatal(err)
+			}
+		})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	address := server.URL
+	server.Close()
+	if err := prometheusWait(context.Background(), address, 20*time.Millisecond, query, "==", 1, "", ""); err == nil || !strings.Contains(err.Error(), "network request failed") {
+		t.Fatal(err)
+	}
+}
+
+func TestPolling(t *testing.T) {
+	for _, alert := range []bool{false, true} {
+		t.Run(fmt.Sprint(alert), func(t *testing.T) {
+			var count atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempt := count.Add(1)
+				if alert {
+					if r.URL.Path != "/api/v1/rules" || r.URL.Query().Get("type") != "alert" {
+						t.Error(r.URL)
+					}
+					state := "pending"
+					if attempt > 1 {
+						state = "inactive"
+					}
+					fmt.Fprintf(w, `{"status":"success","data":%s}`, rules(state, "ok"))
+				} else {
+					fmt.Fprintf(w, `{"status":"success","data":{"resultType":"scalar","result":[1,"%d"]}}`, attempt)
+				}
+			}))
+			defer server.Close()
+			name := ""
+			if alert {
+				name = "Api"
+			}
+			if err := prometheusWait(context.Background(), server.URL, 3*time.Second, "up", "==", 2, name, "inactive"); err != nil {
+				t.Fatal(err)
+			}
+			if count.Load() != 2 {
+				t.Fatal(count.Load())
+			}
+		})
+	}
+}
+
+func TestCancellationAndTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer server.Close()
+	start := time.Now()
+	if err := prometheusWait(context.Background(), server.URL, 40*time.Millisecond, "up", "==", 1, "", ""); err == nil {
+		t.Fatal("timeout missing")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("deadline exceeded")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := prometheusWait(ctx, server.URL, time.Second, "up", "==", 1, "", ""); err == nil || !strings.Contains(err.Error(), "canceled") {
+		t.Fatal(err)
+	}
+}

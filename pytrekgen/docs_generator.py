@@ -8,6 +8,9 @@ from typing import get_args, get_origin
 
 from pytrekgen.config import (
     Check,
+    ConfirmCheck,
+    PrometheusQueryCheck,
+    PrometheusAlertCheck,
     ClickhouseQuerySimpleCheck,
     ClickhouseCompareCheck,
     CustomCheck,
@@ -33,6 +36,9 @@ from pytrekgen.config import (
 
 # All check types (explicit list to avoid Annotated/Union complexity)
 CHECK_TYPES = [
+    ConfirmCheck,
+    PrometheusQueryCheck,
+    PrometheusAlertCheck,
     ParamEqualsCheck,
     ForbiddenAddressCheck,
     WaitCheck,
@@ -69,10 +75,8 @@ def get_model_fields(model_class) -> list[dict]:
 
         field_info = {
             "name": name,
-            "type": str(field.annotation)
-            .replace("typing.", "")
-            .replace("<class '", "")
-            .replace("'>", ""),
+            "type": re.sub(r"<class '([^']+)'>", r"\1", str(field.annotation))
+            .replace("typing.", ""),
             "required": field.is_required(),
             "default": field.default if not field.is_required() else None,
             "description": field.description or "",

@@ -1,0 +1,29 @@
+lab:
+  id: example_prometheus
+  name: Prometheus checks
+  env_prefix: NPL
+required_env:
+  - name: PROMETHEUS_URL
+    error: Укажите URL Prometheus
+checks:
+  - type: confirm
+    name: ready_for_drill
+    message: Подготовьте второй терминал. Готовы начать?
+  - type: prometheus_alert
+    name: api_stopped
+    url: ${PROMETHEUS_URL}
+    alert: ApiUnavailable
+    state: firing
+    message_before: Остановите API во втором терминале. Жду алерта.
+  - type: prometheus_query
+    name: api_recovered
+    url: ${PROMETHEUS_URL}
+    query: min(up{job="api"})
+    operator: "=="
+    expected: 1
+    message_before: Запустите API во втором терминале. Жду target UP.
+  - type: prometheus_alert
+    name: api_alert_cleared
+    url: ${PROMETHEUS_URL}
+    alert: ApiUnavailable
+    state: inactive

@@ -3,7 +3,7 @@
 import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # -----------------------------------------------------------------------------
 # Import Registry
@@ -15,6 +15,8 @@ BASE_IMPORTS: set[str] = {"fmt", "os", "flag"}
 # Each check type declares which Go stdlib imports it needs.
 # Each check type declares which helper template partials it needs.
 CHECK_TYPE_HELPERS: dict[str, list[str]] = {
+    "prometheus_query": ["checks/prometheus_helpers.go.j2"],
+    "prometheus_alert": ["checks/prometheus_helpers.go.j2"],
     "param_equals": ["checks/param_equals_helpers.go.j2"],
     "forbidden_address": ["checks/forbidden_address_helpers.go.j2"],
     "http_get": ["checks/http_get_helpers.go.j2"],
@@ -78,6 +80,12 @@ CHECK_TYPE_STDLIB_IMPORTS: dict[str, set[str]] = {
         "context", "os/signal", "bytes", "encoding/json", "strings", "time",
     },
 }
+
+for _kind in ("prometheus_query", "prometheus_alert"):
+    CHECK_TYPE_STDLIB_IMPORTS[_kind] = {
+        "context", "os/signal", "net/http", "net/url", "encoding/json",
+        "io", "strings", "strconv", "math", "time",
+    }
 
 # -----------------------------------------------------------------------------
 # Common / Shared Models
@@ -250,6 +258,49 @@ class ForbiddenAddressCheck(BaseCheck):
     forbidden: list[str] = Field(
         default_factory=list, description="List of forbidden addresses/patterns"
     )
+
+
+NonBlank = Annotated[str, Field(pattern=r"\S")]
+
+
+class ConfirmCheck(BaseCheck):
+    """Ask for readiness; declining stops the checker without finishing."""
+
+    type: Literal["confirm"] = "confirm"
+    message: NonBlank = Field(description="Readiness question passed to cli.ConfirmAction")
+
+
+class PrometheusCheck(BaseCheck):
+    """Common Prometheus polling settings."""
+
+    url: NonBlank = Field(description="Base URL; declare ${VAR} in required_env explicitly")
+    timeout_seconds: int = Field(default=120, strict=True, gt=0, description="Overall deadline in seconds; polls every second, requests capped at five seconds")
+    message_before: str = Field(default="", description="Message printed once before waiting")
+    message_success: str = Field(default="", description="Message printed only on success")
+
+
+class PrometheusQueryCheck(PrometheusCheck):
+    """Wait for a scalar or single instant-vector value. Empty vectors retry; use PromQL or vector(0) explicitly for absent counters. API errors never become zero."""
+
+    type: Literal["prometheus_query"] = "prometheus_query"
+    query: NonBlank = Field(description="PromQL sent unchanged, without environment substitution")
+    operator: Literal["==", "!=", ">", ">=", "<", "<="]
+    expected: float = Field(allow_inf_nan=False, description="Finite numeric comparison target")
+
+    @field_validator("expected", mode="before")
+    @classmethod
+    def numeric_expected(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("expected must be a finite number")
+        return value
+
+
+class PrometheusAlertCheck(PrometheusCheck):
+    """Wait for one healthy alerting rule from /api/v1/rules. Missing or unhealthy rules retry; duplicate names fail immediately."""
+
+    type: Literal["prometheus_alert"] = "prometheus_alert"
+    alert: NonBlank = Field(description="Exact alerting rule name")
+    state: Literal["inactive", "pending", "firing"]
 
 
 class WaitCheck(BaseCheck):
@@ -854,6 +905,9 @@ Check = Annotated[
     ParamEqualsCheck
     | ForbiddenAddressCheck
     | WaitCheck
+    | ConfirmCheck
+    | PrometheusQueryCheck
+    | PrometheusAlertCheck
     | HTTPGetCheck
     | HTTPGetRandomPathCheck
     | HTTPRequestCheck
@@ -1013,7 +1067,7 @@ class LabConfig(BaseModel):
             or self.has_redis_checks
             or self.has_custom_checks
             or self.has_kafka_to_clickhouse_checks
-            or any(c.type == "clickhouse_compare" for c in self.checks)
+            or any(c.type in ("clickhouse_compare", "prometheus_query", "prometheus_alert") for c in self.checks)
         )
 
     def get_confirm_fields(self) -> list[ConfirmField]:
@@ -1068,6 +1122,12 @@ class LabConfig(BaseModel):
     def required_stdlib_imports(self) -> set[str]:
         """Compute all required Go stdlib imports from check types."""
         result = set(BASE_IMPORTS)
+        if (self.analytics.offline and not self.get_confirm_fields()
+                and not self.analytics.common_data and not self.env_one_of
+                and "${IMAGE}" not in self.usage_docker
+                and "${DEBUG}" not in self.usage_debug
+                and all(c.type in ("confirm", "wait", "branch_flag") for c in self.checks)):
+            result.discard("os")
         for check in self.checks:
             result |= CHECK_TYPE_STDLIB_IMPORTS.get(check.type, set())
         if self.env_one_of:

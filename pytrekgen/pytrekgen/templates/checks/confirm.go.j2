@@ -1,0 +1,7 @@
+	if !cli.ConfirmAction({{ check.message | go_string }}) {
+		logger.Info.Println("Проверка отменена.")
+		return
+	}
+{% if check.on_success.event %}
+	tracker.Ping({{ check.on_success.event | go_string }}, nil)
+{% endif %}

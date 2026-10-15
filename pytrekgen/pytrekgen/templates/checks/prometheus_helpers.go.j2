@@ -1,0 +1,180 @@
+func prometheusValue(data json.RawMessage, operator string, expected float64) (bool, string, error) {
+	var result struct {
+		ResultType string          `json:"resultType"`
+		Result     json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return false, "", fmt.Errorf("invalid query data")
+	}
+	pair := result.Result
+	switch result.ResultType {
+	case "scalar":
+	case "vector":
+		var rows []struct {
+			Value json.RawMessage `json:"value"`
+		}
+		if err := json.Unmarshal(pair, &rows); err != nil || rows == nil {
+			return false, "", fmt.Errorf("invalid vector")
+		}
+		if len(rows) == 0 {
+			return false, "empty vector", nil
+		}
+		if len(rows) != 1 {
+			return false, "", fmt.Errorf("expected one series, got %d", len(rows))
+		}
+		pair = rows[0].Value
+	default:
+		return false, "", fmt.Errorf("unsupported query result type %q", result.ResultType)
+	}
+	var values []json.RawMessage
+	if err := json.Unmarshal(pair, &values); err != nil || len(values) != 2 {
+		return false, "", fmt.Errorf("invalid sample pair")
+	}
+	var timestamp float64
+	var value string
+	if err := json.Unmarshal(values[0], &timestamp); err != nil || string(values[0]) == "null" {
+		return false, "", fmt.Errorf("invalid sample timestamp")
+	}
+	if err := json.Unmarshal(values[1], &value); err != nil {
+		return false, "", fmt.Errorf("invalid sample value")
+	}
+	number, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(number) || math.IsInf(number, 0) {
+		return false, "", fmt.Errorf("sample value is not finite numeric")
+	}
+	var matched bool
+	switch operator {
+	case "==":
+		matched = number == expected
+	case "!=":
+		matched = number != expected
+	case ">":
+		matched = number > expected
+	case ">=":
+		matched = number >= expected
+	case "<":
+		matched = number < expected
+	case "<=":
+		matched = number <= expected
+	default:
+		return false, "", fmt.Errorf("invalid comparison operator")
+	}
+	return matched, "value=" + value, nil
+}
+
+func prometheusRule(data json.RawMessage, name, state string) (bool, string, error) {
+	var result struct {
+		Groups []struct {
+			Rules []struct{ Type, Name, State, Health, LastError string }
+		}
+	}
+	if err := json.Unmarshal(data, &result); err != nil || result.Groups == nil {
+		return false, "", fmt.Errorf("invalid rules data")
+	}
+	count := 0
+	matched := false
+	last := "rule missing"
+	for _, group := range result.Groups {
+		if group.Rules == nil {
+			return false, "", fmt.Errorf("invalid rules group")
+		}
+		for _, rule := range group.Rules {
+			if rule.Type != "alerting" || rule.Name != name {
+				continue
+			}
+			count++
+			last = fmt.Sprintf("state=%s health=%s lastError=%s", rule.State, rule.Health, rule.LastError)
+			matched = rule.Health == "ok" && rule.State == state
+		}
+	}
+	if count > 1 {
+		return false, "", fmt.Errorf("ambiguous alert rule %q: %d rules", name, count)
+	}
+	return matched, last, nil
+}
+
+func prometheusAttempt(ctx context.Context, endpoint string, operator string, expected float64, alert, state string) (bool, string, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, "", fmt.Errorf("invalid Prometheus request")
+	}
+	client := http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, "network request failed", nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 429 || (resp.StatusCode >= 500 && resp.StatusCode < 600) {
+		return false, fmt.Sprintf("HTTP %d", resp.StatusCode), nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, "", fmt.Errorf("Prometheus HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, "response read failed", nil
+	}
+	var envelope struct {
+		Status string
+		Data   json.RawMessage
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return false, "", fmt.Errorf("invalid Prometheus JSON")
+	}
+	if envelope.Status != "success" {
+		return false, "", fmt.Errorf("Prometheus API status %q", envelope.Status)
+	}
+	if alert != "" {
+		return prometheusRule(envelope.Data, alert, state)
+	}
+	return prometheusValue(envelope.Data, operator, expected)
+}
+
+func prometheusWait(parent context.Context, base string, timeout time.Duration, query, operator string, expected float64, alert, state string) error {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	endpoint, err := url.Parse(base)
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+		return fmt.Errorf("invalid Prometheus base URL")
+	}
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/api/v1/"
+	params := endpoint.Query()
+	target := fmt.Sprintf("query %q %s %g", query, operator, expected)
+	if alert != "" {
+		endpoint.Path += "rules"
+		params.Set("type", "alert")
+		target = fmt.Sprintf("alert %q state=%s", alert, state)
+	} else {
+		endpoint.Path += "query"
+		params.Set("query", query)
+	}
+	endpoint.RawPath = ""
+	endpoint.Fragment = ""
+	endpoint.RawQuery = params.Encode()
+	last := "no attempt completed"
+	for {
+		if ctx.Err() != nil {
+			return fmt.Errorf("%s: %v; last: %s", target, ctx.Err(), last)
+		}
+		matched, observation, err := prometheusAttempt(ctx, endpoint.String(), operator, expected, alert, state)
+		if err != nil {
+			return fmt.Errorf("%s: %w", target, err)
+		}
+		last = observation
+		if ctx.Err() != nil {
+			return fmt.Errorf("%s: %v; last: %s", target, ctx.Err(), last)
+		}
+		if matched {
+			return nil
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("%s: %v; last: %s", target, ctx.Err(), last)
+		case <-timer.C:
+		}
+	}
+}
