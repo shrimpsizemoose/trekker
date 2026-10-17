@@ -12,4 +12,5 @@ var (
 	Question = log.New(os.Stdout, "❓  ", 0)
 	Debug    = log.New(os.Stdout, "🚧  ", log.LstdFlags)
 	Victory  = log.New(os.Stdout, "👍👍👍  ", 0)
+	Waiting  = log.New(os.Stdout, "⏳  ", 0)
 )
